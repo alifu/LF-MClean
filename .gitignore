@@ -1,0 +1,24 @@
+# Rust build output
+/target
+
+# Release artifacts (built by the release workflow)
+/dist
+
+# Coverage (cargo-llvm-cov)
+*.profraw
+*.profdata
+lcov.info
+/coverage
+
+# Snapshot tests (insta) waiting for review
+*.snap.new
+*.pending-snap
+
+# Editors and macOS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code plans and local settings
+.claude/
