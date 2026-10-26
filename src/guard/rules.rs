@@ -90,6 +90,16 @@ pub(super) fn is_cache_root(root: &Path, home: &Path) -> bool {
         .any(|rel| lowercase(&home.join(rel)) == root)
 }
 
+/// True for a cache folder, anything inside one, and the folders of tools whose files are not
+/// projects (`.m2`, `.android`): a project is never looked for there.
+pub(super) fn is_in_tool_folder(path: &Path, home: &Path) -> bool {
+    let path = lowercase(path);
+    CACHE_ROOTS
+        .iter()
+        .chain(&[".m2", ".android"])
+        .any(|rel| path.starts_with(lowercase(&home.join(rel))))
+}
+
 pub(super) fn is_protected(path: &Path, home: &Path) -> bool {
     let path = lowercase(path);
     let contains_protected = NEVER_REMOVED_OR_CONTAINED

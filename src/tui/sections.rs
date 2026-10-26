@@ -153,6 +153,7 @@ fn version_entry(
     Entry {
         kept: keep.keeps(&version.item),
         in_use: version.in_use,
+        safety: None,
         item: version.item.clone(),
         label: printable(&version.label),
         detail,
@@ -160,10 +161,11 @@ fn version_entry(
     }
 }
 
-fn entry(item: &Item, label: String, detail: String, keep: &KeepList) -> Entry {
+pub(super) fn entry(item: &Item, label: String, detail: String, keep: &KeepList) -> Entry {
     Entry {
         kept: keep.keeps(item),
         in_use: false,
+        safety: None,
         keep_ref: path_ref(item),
         item: item.clone(),
         label,
@@ -179,7 +181,7 @@ fn path_ref(item: &Item) -> KeepRef {
     }
 }
 
-fn aged(item: &Item, now: DateTime<FixedOffset>) -> String {
+pub(super) fn aged(item: &Item, now: DateTime<FixedOffset>) -> String {
     item.modified
         .map_or_else(String::new, |time| age(time, now))
 }

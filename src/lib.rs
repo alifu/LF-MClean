@@ -29,6 +29,8 @@ pub mod mode;
 pub mod oplog;
 /// `CocoaPods` and Swift packages, one by one.
 pub mod packages;
+/// Build folders of projects.
+pub mod purge;
 /// Removing checked paths.
 pub mod remove;
 /// Finding and measuring caches.

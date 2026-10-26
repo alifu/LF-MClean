@@ -117,6 +117,12 @@ fn warn_about_running_tools(runner: &dyn CommandRunner, targets: &[&Target]) {
 fn known_targets(ids: &[String]) -> Result<Vec<&'static Target>> {
     let mut targets: Vec<&'static Target> = Vec::new();
     for id in ids {
+        if id.starts_with("purge.") {
+            bail!(
+                "{:?} is found by `lfmclean purge`, not by `clean --ids`",
+                printable(id)
+            );
+        }
         let target = catalog::find(id).ok_or_else(|| {
             let known: Vec<&str> = catalog::all_targets().map(|t| t.id).collect();
             anyhow!(
@@ -221,6 +227,46 @@ fn print_outcomes(done: &[Cleaned], mode: Mode, out: &mut impl Write) -> Result<
         "Freed"
     };
     writeln!(out, "{verb} {}", human_size(freed))?;
+    Ok(())
+}
+
+/// Prints the projects found under `folders` as JSON, with the folders that could be removed.
+/// Nothing is removed.
+///
+/// # Errors
+/// When the output fails.
+pub fn purge_json(env: &Env, folders: &[std::path::PathBuf], out: &mut impl Write) -> Result<()> {
+    let found = crate::purge::find_projects(env, folders);
+    let projects: Vec<_> = found
+        .projects
+        .iter()
+        .map(|project| {
+            serde_json::json!({
+                "name": project.name,
+                "folder": project.folder.to_string_lossy(),
+                "changed": project.changed,
+                "total_bytes": project.total_bytes(),
+                "items": project.items.iter().map(|item| serde_json::json!({
+                    "target": item.target,
+                    "name": item.name,
+                    "size_bytes": item.size_bytes,
+                    "partial": item.partial,
+                    "paths": item.removal.paths().iter().map(|p| p.path().to_string_lossy()).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let total: u64 = found
+        .projects
+        .iter()
+        .map(crate::purge::Project::total_bytes)
+        .sum();
+    let report = serde_json::json!({
+        "total_bytes": total,
+        "projects": projects,
+        "problems": found.problems,
+    });
+    writeln!(out, "{}", serde_json::to_string_pretty(&report)?)?;
     Ok(())
 }
 

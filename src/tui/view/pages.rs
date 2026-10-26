@@ -160,7 +160,12 @@ pub(super) fn summary(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let mut lines = Vec::new();
-    for category in [Category::Xcode, Category::Android, Category::GradleKotlin] {
+    for category in [
+        Category::Xcode,
+        Category::Android,
+        Category::GradleKotlin,
+        Category::Projects,
+    ] {
         let in_category: Vec<_> = cleaning
             .done
             .iter()
@@ -346,13 +351,6 @@ fn keep_line(entry: &KeepLine, index: usize, app: &App) -> Line<'static> {
     } else {
         line
     }
-}
-
-pub(super) fn purge(frame: &mut Frame, area: Rect) {
-    frame.render_widget(
-        Paragraph::new("\n Finding the build folders of your projects comes in a later version."),
-        area,
-    );
 }
 
 #[cfg(test)]

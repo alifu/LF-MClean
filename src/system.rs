@@ -43,6 +43,8 @@ const TOOLS: &[(Tool, Mark, &[&str])] = &[
         &[
             "xcode.derived-data",
             "xcode.previews",
+            "purge.ios-build",
+            "purge.pods",
             "spm.repositories",
             "spm.manifests",
             "spm.source-packages",
@@ -70,6 +72,10 @@ const TOOLS: &[(Tool, Mark, &[&str])] = &[
         &[
             "gradle.caches",
             "gradle.daemon",
+            "purge.build",
+            "purge.build-unsure",
+            "purge.gradle",
+            "purge.kotlin",
             "gradle.wrapper",
             "konan.toolchains",
             "konan.dependencies",
@@ -78,7 +84,7 @@ const TOOLS: &[(Tool, Mark, &[&str])] = &[
     (
         Tool::KotlinDaemon,
         Mark::Argument("org.jetbrains.kotlin.daemon.KotlinCompileDaemon"),
-        &["konan.toolchains", "konan.dependencies"],
+        &["konan.toolchains", "konan.dependencies", "purge.kotlin"],
     ),
 ];
 

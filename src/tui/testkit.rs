@@ -7,6 +7,7 @@ use crate::catalog::{self, Simulator};
 use crate::keep::KeepList;
 use crate::mode::Mode;
 use crate::packages::{Browse, Manager, Package, Usage, Version};
+use crate::purge::{Found, Project};
 use crate::scan::{Item, Removal, Report, TargetReport};
 use crate::testing::Fixture;
 
@@ -153,4 +154,40 @@ pub fn press(app: &App, keys: &[Key]) -> (App, Vec<super::app::Effect>) {
             effects.extend(more);
             (next, effects)
         })
+}
+
+/// Two made-up projects: a Kotlin Multiplatform app with three folders and a small library.
+pub fn found_projects() -> Found {
+    let project = |name: &str, days: i64, items: Vec<Item>| Project {
+        name: name.to_string(),
+        folder: format!("/Users/me/Projects/{name}").into(),
+        changed: Some(now() - Duration::days(days)),
+        items,
+    };
+    Found {
+        projects: vec![
+            project(
+                "Library",
+                200,
+                vec![item("purge.build", "build", 50 * MB, 200)],
+            ),
+            project(
+                "ShopApp",
+                3,
+                vec![
+                    item("purge.build", "composeApp/build", 900 * MB, 3),
+                    item("purge.gradle", ".gradle", 120 * MB, 3),
+                    item("purge.pods", "iosApp/Pods", 300 * MB, 30),
+                ],
+            ),
+        ],
+        problems: Vec::new(),
+    }
+}
+
+/// The app on the Purge screen with the made-up projects in.
+pub fn on_purge(fx: &Fixture) -> App {
+    let (app, _) = app(fx, Mode::Trash).on_key(Key::Char('3'));
+    app.on_event(Event::PurgeScanned(app.purge.generation, found_projects()))
+        .0
 }

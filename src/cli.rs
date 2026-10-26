@@ -11,6 +11,7 @@ use crate::command::SystemRunner;
 use crate::env::Env;
 use crate::headless::{self, CleanOptions};
 use crate::mode::Mode;
+use crate::purge;
 use crate::scan::{Scanner, render};
 use crate::tui::{self, Screen};
 
@@ -72,7 +73,15 @@ pub enum Command {
     /// Browse `CocoaPods` and Swift packages to delete or keep.
     Packages,
     /// Find and remove the build folders of your projects.
-    Purge,
+    Purge {
+        /// Search these folders (inside your home folder) instead of ~/Documents, ~/Developer
+        /// and ~/Projects, separated by commas.
+        #[arg(long, value_delimiter = ',', value_name = "FOLDER,FOLDER")]
+        paths: Vec<String>,
+        /// Print the projects found as JSON and remove nothing.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show and edit what is never removed.
     Keep,
     /// Show what was removed.
@@ -102,17 +111,28 @@ pub fn run(cli: &Cli, out: &mut impl Write) -> Result<()> {
             let runner = SystemRunner::default();
             headless::clean_ids(&Env::from_system()?, &runner, cli.mode(), ids, options, out)
         }
+        Some(Command::Purge { paths, json: true }) => {
+            let env = Env::from_system()?;
+            headless::purge_json(&env, &folders_from(&env, paths)?, out)
+        }
         Some(Command::History { json }) if *json || !is_interactive() => {
             headless::history(&Env::from_system()?, *json, out)
         }
         Some(command) => screen(command, cli.mode()),
-        None if is_interactive() => tui::run(&Env::from_system()?, cli.mode(), Screen::Menu),
+        None if is_interactive() => tui::run(&Env::from_system()?, cli.mode(), Screen::Menu, None),
         None => {
             Cli::command().write_help(out)?;
             writeln!(out)?;
             Ok(())
         }
     }
+}
+
+fn folders_from(env: &Env, paths: &[String]) -> Result<Vec<std::path::PathBuf>> {
+    if paths.is_empty() {
+        return Ok(purge::default_folders(env));
+    }
+    purge::folders_from(env, paths).map_err(|reason| anyhow::anyhow!(reason))
 }
 
 fn is_interactive() -> bool {
@@ -125,16 +145,21 @@ fn screen(command: &Command, mode: Mode) -> Result<()> {
         Command::Scan { .. } => bail!("scan has no screen"),
         Command::Clean { .. } => Screen::Clean,
         Command::Packages => Screen::Packages,
-        Command::Purge => Screen::Purge,
+        Command::Purge { .. } => Screen::Purge,
         Command::Keep => Screen::Keep,
         Command::History { .. } => Screen::History,
     };
     if !is_interactive() {
         bail!(
-            "this command needs a terminal; for scripts use `scan --json`, `clean --ids` or `history --json`"
+            "this command needs a terminal; for scripts use `scan --json`, `clean --ids`, `purge --json` or `history --json`"
         );
     }
-    tui::run(&Env::from_system()?, mode, screen)
+    let env = Env::from_system()?;
+    let folders = match command {
+        Command::Purge { paths, .. } if !paths.is_empty() => Some(folders_from(&env, paths)?),
+        _ => None,
+    };
+    tui::run(&env, mode, screen, folders)
 }
 
 fn scan(json: bool, items: bool, out: &mut impl Write) -> Result<()> {

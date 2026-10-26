@@ -19,7 +19,9 @@ const SIZE_WIDTH: usize = 9;
 const TOP_LINES: u16 = 2;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
-    let (list, loading) = if app.screen == Screen::Packages {
+    let (list, loading) = if app.screen == Screen::Purge {
+        (&app.purge.list, loading_text(&app.purge.found))
+    } else if app.screen == Screen::Packages {
         (&app.package_list, loading_text(&app.packages))
     } else {
         (&app.clean_list, loading_text(&app.scan))

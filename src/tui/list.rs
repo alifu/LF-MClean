@@ -68,6 +68,8 @@ pub struct Entry {
     pub kept: bool,
     /// True when a project's lock file names this copy; shortcuts never tick it.
     pub in_use: bool,
+    /// How careful to be with this one when it differs from its group (a project's `Pods`).
+    pub safety: Option<Safety>,
 }
 
 /// A cache or a package, with its items.
@@ -90,6 +92,12 @@ pub struct Group {
 }
 
 impl Group {
+    /// How careful to be with `entry`: its own level, else the group's.
+    #[must_use]
+    pub fn safety_of(&self, entry: &Entry) -> Safety {
+        entry.safety.unwrap_or(self.safety)
+    }
+
     /// Total size of the items.
     #[must_use]
     pub fn total_bytes(&self) -> u64 {

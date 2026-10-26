@@ -4,6 +4,7 @@
 //! Layers: the root must be one of the fixed cache folders in `rules`; the entry must be
 //! strictly inside it, on the same volume, owned by the user and not on the protected lists.
 
+mod project;
 mod rules;
 
 use std::fs::{self, Metadata};
@@ -58,6 +59,12 @@ pub enum GuardError {
     /// The entry is on another volume than its root (a mount point).
     #[error("{0} is on another volume")]
     OtherVolume(PathBuf),
+    /// The folder is not one `purge` removes, or the files that show it is one are missing.
+    #[error("{0} is not a build folder of a project")]
+    NotProjectFolder(PathBuf),
+    /// The project folder is the home folder, outside it, or inside `Library`.
+    #[error("{0} cannot be used as a project folder")]
+    ProjectNotAllowed(PathBuf),
     /// The path now leads to something other than what was checked.
     #[error("{0} changed since it was checked")]
     Changed(PathBuf),
@@ -92,9 +99,20 @@ impl Identity {
     }
 }
 
-/// A path that passed every check. Its fields are private so it can only be made by `check`.
+/// Which set of rules a path was checked against; checking again uses the same set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Inside one of the fixed cache folders.
+    Cache,
+    /// A build folder of a project.
+    Project,
+}
+
+/// A path that passed every check. Its fields are private so it can only be made by `check` or
+/// `check_project`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafePath {
+    scope: Scope,
     path: PathBuf,
     root: PathBuf,
     kind: EntryKind,
@@ -132,7 +150,10 @@ impl SafePath {
     /// # Errors
     /// Any `check` error, or `Changed` when the path now leads somewhere else.
     pub fn revalidate(&self, env: &Env) -> Result<(), GuardError> {
-        let now = check(&self.path, &self.root, env)?;
+        let now = match self.scope {
+            Scope::Cache => check(&self.path, &self.root, env)?,
+            Scope::Project => check_project(&self.path, &self.root, env)?,
+        };
         if now != *self {
             return Err(GuardError::Changed(self.path.clone()));
         }
@@ -173,6 +194,62 @@ pub fn check(path: &Path, root: &Path, env: &Env) -> Result<SafePath, GuardError
     let parent = parent_identity(&resolved)?;
 
     Ok(SafePath {
+        scope: Scope::Cache,
+        path: resolved,
+        root,
+        kind,
+        entry: Identity::of(&meta),
+        parent,
+    })
+}
+
+/// Checks that `path` is a build folder of the project in `project`, which may be removed by
+/// `purge`: the entry must be strictly inside the project folder, which must be strictly inside
+/// the home folder and outside `Library`, and must have one of the names `purge` removes beside the
+/// files that show what it is. The other rules of `check` apply too.
+///
+/// # Errors
+/// A `GuardError` naming the first rule the path breaks.
+pub fn check_project(path: &Path, project: &Path, env: &Env) -> Result<SafePath, GuardError> {
+    if !path.is_absolute() {
+        return Err(GuardError::NotAbsolute(path.to_path_buf()));
+    }
+    let home = canonical(env.home())?;
+    let root = canonical(project)?;
+    let library = home.join("Library");
+    let usable = is_strictly_inside(&root, &home)
+        && !root.starts_with(&library)
+        && !rules::is_in_tool_folder(&root, &home)
+        && !rules::is_protected(&root, &home);
+    if !usable {
+        return Err(GuardError::ProjectNotAllowed(root));
+    }
+    let root_meta = fs::metadata(&root).map_err(|err| fs_error(&root, &err))?;
+    let (resolved, meta) = resolve_entry(path)?;
+    if !is_strictly_inside(&resolved, &root) {
+        return Err(GuardError::OutsideRoot {
+            path: resolved,
+            root,
+        });
+    }
+    if rules::is_protected(&resolved, &home) || resolved.starts_with(&library) {
+        return Err(GuardError::Protected(resolved));
+    }
+    if !project::is_removable_project_folder(&resolved, &root) {
+        return Err(GuardError::NotProjectFolder(resolved));
+    }
+    let Some(kind) = kind_of(&meta) else {
+        return Err(GuardError::UnsupportedKind(resolved));
+    };
+    if meta.uid() != env.uid() {
+        return Err(GuardError::NotOwned(resolved));
+    }
+    if meta.dev() != root_meta.dev() {
+        return Err(GuardError::OtherVolume(resolved));
+    }
+    let parent = parent_identity(&resolved)?;
+    Ok(SafePath {
+        scope: Scope::Project,
         path: resolved,
         root,
         kind,
@@ -508,6 +585,175 @@ mod tests {
         assert!(matches!(
             safe.revalidate(&fx.env),
             Err(GuardError::Changed(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+    use crate::testing::Fixture;
+
+    fn project(fx: &Fixture) -> PathBuf {
+        fx.file("Documents/app/settings.gradle.kts");
+        fx.dir("Documents/app/build");
+        fx.home().join("Documents/app")
+    }
+
+    #[test]
+    fn accepts_a_build_folder_of_a_project() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+
+        let safe = check_project(&root.join("build"), &root, &fx.env).unwrap();
+
+        assert_eq!(safe.kind(), EntryKind::Dir);
+        assert!(safe.path().ends_with("app/build"));
+        assert!(safe.revalidate(&fx.env).is_ok());
+    }
+
+    #[test]
+    fn refuses_other_folders_of_the_project() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+        fx.dir("Documents/app/src");
+
+        for name in ["src", "settings.gradle.kts"] {
+            assert!(
+                matches!(
+                    check_project(&root.join(name), &root, &fx.env),
+                    Err(GuardError::NotProjectFolder(_))
+                ),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_the_project_folder_itself_and_anything_outside_it() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+        fx.file("Documents/other/build.gradle.kts");
+        fx.dir("Documents/other/build");
+
+        assert!(matches!(
+            check_project(&root, &root, &fx.env),
+            Err(GuardError::OutsideRoot { .. })
+        ));
+        assert!(matches!(
+            check_project(&fx.home().join("Documents/other/build"), &root, &fx.env),
+            Err(GuardError::OutsideRoot { .. })
+        ));
+        assert!(matches!(
+            check_project(&root.join("../other/build"), &root, &fx.env),
+            Err(GuardError::OutsideRoot { .. })
+        ));
+    }
+
+    #[test]
+    fn refuses_a_project_that_is_home_or_outside_it_or_in_library() {
+        let fx = Fixture::new();
+        fx.file("build.gradle.kts");
+        fx.dir("build");
+        fx.file("Library/x/build.gradle.kts");
+        fx.dir("Library/x/build");
+        fx.file("outside/build.gradle.kts");
+        let outside_build = fx.outside.join("build");
+        fs::create_dir_all(&outside_build).unwrap();
+        fs::write(fx.outside.join("build.gradle.kts"), "x").unwrap();
+
+        for (entry, root) in [
+            (fx.home().join("build"), fx.home().to_path_buf()),
+            (
+                fx.home().join("Library/x/build"),
+                fx.home().join("Library/x"),
+            ),
+            (outside_build.clone(), fx.outside.clone()),
+            (fx.home().join("Documents"), fx.home().join("Documents")),
+        ] {
+            fs::create_dir_all(fx.home().join("Documents")).unwrap();
+            assert!(
+                matches!(
+                    check_project(&entry, &root, &fx.env),
+                    Err(GuardError::ProjectNotAllowed(_))
+                ),
+                "{}",
+                entry.display()
+            );
+        }
+        assert!(outside_build.exists());
+    }
+
+    #[test]
+    fn refuses_a_project_inside_a_cache_folder() {
+        let fx = Fixture::new();
+        fx.file(".gradle/caches/x/settings.gradle.kts");
+        fx.dir(".gradle/caches/x/build");
+        fx.file(".android/avd/p/build.gradle");
+        fx.dir(".android/avd/p/build");
+
+        for project in [".gradle/caches/x", ".android/avd/p"] {
+            let root = fx.home().join(project);
+
+            assert!(
+                matches!(
+                    check_project(&root.join("build"), &root, &fx.env),
+                    Err(GuardError::ProjectNotAllowed(_))
+                ),
+                "{project}"
+            );
+        }
+    }
+
+    #[test]
+    fn never_removes_the_gradle_home() {
+        let fx = Fixture::new();
+        fx.file("build.gradle");
+        fx.dir(".gradle");
+
+        let result = check_project(&fx.home().join(".gradle"), fx.home(), &fx.env);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_symlink_named_build_is_removed_as_a_link() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+        fs::remove_dir_all(root.join("build")).unwrap();
+        symlink(&fx.outside, root.join("build")).unwrap();
+
+        let safe = check_project(&root.join("build"), &root, &fx.env).unwrap();
+
+        assert_eq!(safe.kind(), EntryKind::Symlink);
+        assert!(fx.outside_is_intact());
+    }
+
+    #[test]
+    fn refuses_what_another_user_owns() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+
+        assert!(matches!(
+            check_project(&root.join("build"), &root, &fx.other_user_env()),
+            Err(GuardError::NotOwned(_))
+        ));
+    }
+
+    #[test]
+    fn revalidating_notices_a_swapped_folder_and_a_lost_gradle_file() {
+        let fx = Fixture::new();
+        let root = project(&fx);
+        let safe = check_project(&root.join("build"), &root, &fx.env).unwrap();
+
+        fs::remove_file(root.join("settings.gradle.kts")).unwrap();
+
+        assert!(matches!(
+            safe.revalidate(&fx.env),
+            Err(GuardError::NotProjectFolder(_))
         ));
     }
 }

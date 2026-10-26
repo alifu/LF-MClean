@@ -265,7 +265,7 @@ impl<'a> Scanner<'a> {
     }
 }
 
-fn modified(path: &Path) -> Option<DateTime<FixedOffset>> {
+pub(crate) fn modified(path: &Path) -> Option<DateTime<FixedOffset>> {
     let time: SystemTime = fs::symlink_metadata(path).ok()?.modified().ok()?;
     Some(DateTime::<Local>::from(time).fixed_offset())
 }

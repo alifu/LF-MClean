@@ -3,7 +3,9 @@
 
 pub mod app;
 pub mod keep_screen;
+mod keys;
 pub mod list;
+pub mod purge;
 pub mod review;
 pub mod sections;
 mod view;
@@ -47,7 +49,12 @@ const FRAME_LINES: u16 = 4;
 ///
 /// # Errors
 /// When the terminal cannot be used.
-pub fn run(env: &Env, mode: Mode, start: Screen) -> Result<()> {
+pub fn run(
+    env: &Env,
+    mode: Mode,
+    start: Screen,
+    purge_folders: Option<Vec<std::path::PathBuf>>,
+) -> Result<()> {
     let keep = KeepList::load(env).map_err(|err| err.to_string());
     let app = App::new(
         mode,
@@ -56,6 +63,10 @@ pub fn run(env: &Env, mode: Mode, start: Screen) -> Result<()> {
         free_space(env.home()).ok(),
         Local::now().fixed_offset(),
     );
+    let app = match purge_folders {
+        Some(folders) => app.with_purge_folders(folders),
+        None => app,
+    };
     let (app, first) = app.start_at(start);
     // Unbounded is fine: at most one event per target or removed item.
     let (sender, receiver) = mpsc::channel();
@@ -167,6 +178,7 @@ fn describe(effect: &Effect) -> &'static str {
     match effect {
         Effect::Scan(_) => "The scan",
         Effect::ScanPackages(_) => "The package scan",
+        Effect::ScanPurge(..) => "The project search",
         Effect::SaveKeep(_) => "Saving the keep list",
         Effect::LoadHistory => "Reading the history",
         Effect::Clean(_) => "Cleaning",
@@ -187,6 +199,12 @@ fn run_effect(effect: Effect, env: &Env, mode: Mode, send: &dyn Fn(Event)) {
             let usage = find_usage(env);
             let found = browse(&Scanner::new(env, &runner), &usage);
             send(Event::PackagesScanned(generation, found, usage));
+        }
+        Effect::ScanPurge(generation, folders) => {
+            send(Event::PurgeScanned(
+                generation,
+                crate::purge::find_projects(env, &folders),
+            ));
         }
         Effect::SaveKeep(keep) => send(Event::KeepSaved(keep.save(env).map_err(|e| e.to_string()))),
         Effect::LoadHistory => {

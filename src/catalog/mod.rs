@@ -5,6 +5,7 @@ mod android;
 mod discover;
 mod emulators;
 mod gradle;
+mod projects;
 mod simulators;
 mod xcode;
 
@@ -24,6 +25,8 @@ pub enum Category {
     Android,
     /// Gradle and Kotlin/Native.
     GradleKotlin,
+    /// Build folders inside the user's projects.
+    Projects,
 }
 
 impl Category {
@@ -34,6 +37,7 @@ impl Category {
             Self::Xcode => "Xcode",
             Self::Android => "Android",
             Self::GradleKotlin => "Gradle & Kotlin",
+            Self::Projects => "Projects",
         }
     }
 }
@@ -168,11 +172,15 @@ pub fn all_targets() -> impl Iterator<Item = &'static Target> {
 /// whole scan, which already counts them as `DerivedData`.
 pub static SOURCE_PACKAGES: &Target = &xcode::SOURCE_PACKAGES;
 
-/// The target with this id, including `SOURCE_PACKAGES`.
+/// What `purge` finds inside projects; not part of a whole scan.
+pub static PROJECT_TARGETS: &[Target] = projects::TARGETS;
+
+/// The target with this id, including `SOURCE_PACKAGES` and the `purge` targets.
 #[must_use]
 pub fn find(id: &str) -> Option<&'static Target> {
     all_targets()
         .chain(std::iter::once(SOURCE_PACKAGES))
+        .chain(PROJECT_TARGETS)
         .find(|target| target.id == id)
 }
 

@@ -354,3 +354,56 @@ fn simulators_are_refused_in_trash_mode() {
     );
     assert!(data.exists());
 }
+
+fn plant_project(sb: &Sandbox, rel: &str) -> PathBuf {
+    let root = sb.home.join(rel);
+    fs::create_dir_all(root.join("build/classes")).unwrap();
+    fs::write(root.join("build/classes/out.bin"), vec![1_u8; 50_000]).unwrap();
+    fs::write(root.join("settings.gradle.kts"), "x").unwrap();
+    root
+}
+
+#[test]
+fn purge_json_lists_projects_and_removes_nothing() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+    let root = plant_project(&sb, "Projects/App");
+
+    let output = run(&mut sb.lfmclean(&["purge", "--json"]));
+
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let value: serde_json::Value = serde_json::from_str(&text(&output.stdout)).unwrap();
+    assert_eq!(value["projects"][0]["name"], "App");
+    assert_eq!(value["projects"][0]["items"][0]["name"], "build");
+    assert_eq!(value["projects"][0]["items"][0]["target"], "purge.build");
+    assert!(value["total_bytes"].as_u64().unwrap() >= 50_000);
+    assert!(root.join("build").exists());
+}
+
+#[test]
+fn purge_paths_chooses_the_folders_and_must_be_inside_home() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+    plant_project(&sb, "Code/Elsewhere");
+
+    let found = run(&mut sb.lfmclean(&["purge", "--json", "--paths", "~/Code"]));
+    let default = run(&mut sb.lfmclean(&["purge", "--json"]));
+    let outside = run(&mut sb.lfmclean(&["purge", "--json", "--paths", "/usr"]));
+
+    let names = |out: &std::process::Output| {
+        let v: serde_json::Value = serde_json::from_str(&text(&out.stdout)).unwrap();
+        v["projects"].as_array().unwrap().len()
+    };
+    assert_eq!(names(&found), 1);
+    assert_eq!(names(&default), 0);
+    assert!(!outside.status.success());
+    assert!(text(&outside.stderr).contains("inside your home"));
+}
+
+#[test]
+fn purge_ids_are_not_cleaned_by_id() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+
+    let output = run(&mut sb.lfmclean(&["clean", "--ids", "purge.build", "--yes"]));
+
+    assert!(!output.status.success());
+    assert!(text(&output.stderr).contains("lfmclean purge"));
+}

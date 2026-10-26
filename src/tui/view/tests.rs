@@ -9,7 +9,7 @@ use crate::oplog::{LogContents, LogEntry};
 use crate::packages::Usage;
 use crate::testing::Fixture;
 use crate::tui::app::{App, Event, Key};
-use crate::tui::testkit::{MB, app, item, now, on_clean, on_packages, press};
+use crate::tui::testkit::{MB, app, item, now, on_clean, on_packages, on_purge, press};
 
 const WIDTH: u16 = 100;
 const HEIGHT: u16 = 24;
@@ -220,8 +220,19 @@ fn keep_list_with_a_marked_entry() {
 }
 
 #[test]
-fn purge_is_not_there_yet() {
+fn purge_while_searching() {
     let fx = Fixture::new();
 
     insta::assert_snapshot!(screen(&app(&fx, Mode::DryRun).on_key(Key::Char('3')).0));
+}
+
+#[test]
+fn purge_lists_projects_with_one_opened() {
+    let fx = Fixture::new();
+    let (app, _) = press(
+        &on_purge(&fx),
+        &[Key::Down, Key::Right, Key::Down, Key::Char(' ')],
+    );
+
+    insta::assert_snapshot!(screen(&app));
 }

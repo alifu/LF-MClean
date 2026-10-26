@@ -63,6 +63,13 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
+/// `1 folder`, `2 folders`.
+#[must_use]
+pub fn folders(count: usize) -> String {
+    let noun = if count == 1 { "folder" } else { "folders" };
+    format!("{count} {noun}")
+}
+
 /// `1 item`, `2 items`.
 #[must_use]
 pub fn items(count: usize) -> String {

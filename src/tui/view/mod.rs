@@ -34,8 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(header_lines(app)), header);
     match app.screen {
         Screen::Menu => draw_menu(frame, body, app),
-        Screen::Clean | Screen::Packages => lists::draw(frame, body, app),
-        Screen::Purge => pages::purge(frame, body),
+        Screen::Clean | Screen::Packages | Screen::Purge => lists::draw(frame, body, app),
         Screen::Keep => pages::keep(frame, body, app),
         Screen::History => pages::history(frame, body, app),
         Screen::Review => pages::review(frame, body, app),
@@ -89,7 +88,7 @@ fn mode_badge(mode: Mode) -> Span<'static> {
 fn footer_lines(app: &App) -> Vec<Line<'static>> {
     let keys = match app.screen {
         Screen::Menu => "↑↓ / 1-6 choose   enter open   q quit",
-        Screen::Clean => {
+        Screen::Clean | Screen::Purge => {
             "↑↓ move  space tick  →← open/close  k keep  a all safe  n none  enter review  esc menu"
         }
         Screen::Packages => {
@@ -99,7 +98,6 @@ fn footer_lines(app: &App) -> Vec<Line<'static>> {
         Screen::History | Screen::Review => "↑↓ scroll   esc back",
         Screen::Cleaning => "",
         Screen::Summary => "enter menu",
-        Screen::Purge => "esc back",
     };
     let note = app.message.clone().unwrap_or_default();
     vec![
