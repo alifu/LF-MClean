@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use super::{Item, Removal, Report, Skipped, TargetReport};
 use crate::catalog::{Category, Safety};
-use crate::format::{age, human_size};
+use crate::format::{age, human_size, printable};
 
 const SAFETY_WIDTH: usize = 7;
 const COLUMN_GAP: &str = "  ";
@@ -85,7 +85,7 @@ fn rows_for(target: &TargetReport, now: DateTime<FixedOffset>, with_items: bool)
         ),
     };
     let items = target.items.iter().filter(|_| with_items).map(|item| Row {
-        label: format!("    {}", item.name),
+        label: format!("    {}", printable(&item.name)),
         size: size_text(item.size_bytes, item.partial),
         rest: item
             .modified
@@ -124,7 +124,7 @@ fn not_offered(report: &Report) -> String {
     }
     let lines: Vec<String> = skipped
         .iter()
-        .map(|(target, skip)| format!("  {}: {}\n", target.target.name, skip.reason))
+        .map(|(target, skip)| format!("  {}: {}\n", target.target.name, printable(&skip.reason)))
         .collect();
     format!("\nNot offered ({}):\n{}", skipped.len(), lines.concat())
 }
@@ -216,7 +216,15 @@ impl<'a> From<&'a Item> for ItemJson<'a> {
                     .collect(),
                 Vec::new(),
             ),
-            Removal::SimctlDelete { udids } => ("simctl-delete", Vec::new(), udids.clone()),
+            Removal::SimctlDelete { .. } => (
+                "simctl-delete",
+                Vec::new(),
+                item.removal
+                    .udids()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            ),
         };
         Self {
             name: &item.name,
@@ -235,7 +243,7 @@ mod tests {
     use chrono::{Duration, TimeZone};
 
     use super::*;
-    use crate::catalog;
+    use crate::catalog::{self, Simulator};
 
     fn now() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(7 * 3600)
@@ -249,7 +257,10 @@ mod tests {
             target,
             name: name.to_string(),
             removal: Removal::SimctlDelete {
-                udids: vec!["AAAA".to_string()],
+                simulators: vec![Simulator {
+                    udid: "AAAA".to_string(),
+                    folder: "/Users/x/Library/Developer/CoreSimulator/Devices/AAAA".into(),
+                }],
             },
             size_bytes: bytes,
             partial,

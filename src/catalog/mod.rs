@@ -164,10 +164,16 @@ pub fn all_targets() -> impl Iterator<Item = &'static Target> {
         .chain(gradle::TARGETS)
 }
 
-/// The target with this id.
+/// Project package checkouts inside `DerivedData`, browsed package by package but not part of a
+/// whole scan, which already counts them as `DerivedData`.
+pub static SOURCE_PACKAGES: &Target = &xcode::SOURCE_PACKAGES;
+
+/// The target with this id, including `SOURCE_PACKAGES`.
 #[must_use]
 pub fn find(id: &str) -> Option<&'static Target> {
-    all_targets().find(|target| target.id == id)
+    all_targets()
+        .chain(std::iter::once(SOURCE_PACKAGES))
+        .find(|target| target.id == id)
 }
 
 #[cfg(test)]

@@ -17,10 +17,14 @@ pub mod env;
 pub mod format;
 /// Path checks before any removal.
 pub mod guard;
+/// What is never removed.
+pub mod keep;
 /// Trash, permanent or dry run.
 pub mod mode;
 /// The removal log.
 pub mod oplog;
+/// `CocoaPods` and Swift packages, one by one.
+pub mod packages;
 /// Removing checked paths.
 pub mod remove;
 /// Finding and measuring caches.

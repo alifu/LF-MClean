@@ -133,3 +133,20 @@ pub(super) const TARGETS: &[Target] = &[
         sources: &[Source::children(".cocoapods/repos", Filter::DirsOnly)],
     },
 ];
+
+/// The packages Xcode checked out for one project, inside its `DerivedData` folder. Offered only
+/// in the package browser: cleaning `DerivedData` already removes them.
+pub(super) const SOURCE_PACKAGES: Target = Target {
+    id: "spm.source-packages",
+    name: "Swift packages of a project",
+    category: Category::Xcode,
+    safety: Safety::Safe,
+    effect: "Xcode resolves and checks the packages out again.",
+    kind: Kind::Paths,
+    sources: &[Source::nested(
+        DERIVED_DATA,
+        "",
+        2,
+        Filter::Named(&["SourcePackages"]),
+    )],
+};

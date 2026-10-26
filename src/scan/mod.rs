@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset, Local};
 
-use crate::catalog::{self, Candidate, Discovery, Kind, Source, Target};
+use crate::catalog::{self, Candidate, Discovery, Kind, Simulator, Source, Target};
 use crate::command::CommandRunner;
 use crate::env::Env;
 use crate::guard::{self, SafePath};
@@ -27,10 +27,10 @@ pub enum Removal {
         /// Entries that belong to it, such as the `.ini` file of an emulator.
         with: Vec<SafePath>,
     },
-    /// Run `xcrun simctl delete` for each of these checked ids.
+    /// Run `xcrun simctl delete` for each of these simulators.
     SimctlDelete {
-        /// Ids that passed `catalog::unavailable_simulators`.
-        udids: Vec<String>,
+        /// Simulators that passed `catalog::unavailable_simulators`.
+        simulators: Vec<Simulator>,
     },
 }
 
@@ -41,6 +41,28 @@ impl Removal {
         match self {
             Self::Paths { main, with } => std::iter::once(main).chain(with).collect(),
             Self::SimctlDelete { .. } => Vec::new(),
+        }
+    }
+
+    /// Every folder this removal deletes, including the simulator folders `simctl` deletes.
+    #[must_use]
+    pub fn folders(&self) -> Vec<&Path> {
+        match self {
+            Self::Paths { .. } => self.paths().into_iter().map(SafePath::path).collect(),
+            Self::SimctlDelete { simulators } => {
+                simulators.iter().map(|sim| sim.folder.as_path()).collect()
+            }
+        }
+    }
+
+    /// The simulator ids, for `SimctlDelete`.
+    #[must_use]
+    pub fn udids(&self) -> Vec<&str> {
+        match self {
+            Self::Paths { .. } => Vec::new(),
+            Self::SimctlDelete { simulators } => {
+                simulators.iter().map(|sim| sim.udid.as_str()).collect()
+            }
         }
     }
 }
@@ -68,7 +90,7 @@ impl Item {
     pub fn key(&self) -> String {
         let what = match &self.removal {
             Removal::Paths { main, .. } => main.path().display().to_string(),
-            Removal::SimctlDelete { udids } => udids.join(","),
+            Removal::SimctlDelete { .. } => self.removal.udids().join(","),
         };
         format!("{}:{what}", self.target)
     }
@@ -235,9 +257,7 @@ impl<'a> Scanner<'a> {
         Ok(Some(Item {
             target: target.id,
             name: format!("Unavailable simulators ({})", simulators.len()),
-            removal: Removal::SimctlDelete {
-                udids: simulators.into_iter().map(|sim| sim.udid).collect(),
-            },
+            removal: Removal::SimctlDelete { simulators },
             size_bytes: usages.iter().map(|usage| usage.bytes).sum(),
             partial: usages.iter().any(|usage| usage.unreadable > 0),
             modified: None,
@@ -425,11 +445,9 @@ mod tests {
 
         assert_eq!(names(&report), ["Unavailable simulators (3)"]);
         let item = &report.items[0];
-        let Removal::SimctlDelete { udids } = &item.removal else {
-            panic!("expected a simctl removal");
-        };
-        let mut udids = udids.clone();
-        udids.sort();
+        assert!(matches!(item.removal, Removal::SimctlDelete { .. }));
+        let mut udids = item.removal.udids();
+        udids.sort_unstable();
         assert_eq!(udids, ["AAAA", "BBBB", "CCCC"]);
         let expected = size::disk_usage(first.parent().unwrap()).bytes
             + size::disk_usage(second.parent().unwrap()).bytes;

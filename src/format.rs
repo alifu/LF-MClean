@@ -48,6 +48,21 @@ pub fn age(then: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
     }
 }
 
+/// Text safe to print on a terminal: control characters, which a folder name from a cloned
+/// repository could use to rewrite the screen, are shown escaped (`\u{1b}`).
+#[must_use]
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_unicode().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone};
@@ -102,5 +117,11 @@ mod tests {
     #[test]
     fn a_time_in_the_future_reads_as_today() {
         assert_eq!(age(now() + Duration::days(2), now()), "today");
+    }
+
+    #[test]
+    fn printable_text_escapes_control_characters_only() {
+        assert_eq!(printable("App-abc ü 📦"), "App-abc ü 📦");
+        assert_eq!(printable("a\u{1b}[2Jb\nc"), "a\\u{1b}[2Jb\\u{a}c");
     }
 }
