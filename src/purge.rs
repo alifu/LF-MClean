@@ -13,6 +13,7 @@ use jwalk::WalkDir;
 use crate::command::{CommandRunner, SystemRunner};
 use crate::env::Env;
 use crate::guard::{self, IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES, SafePath};
+use crate::keep::folded;
 use crate::packages::DEFAULT_PROJECT_FOLDERS;
 use crate::scan::size::disk_usage;
 use crate::scan::{Item, Removal, modified};
@@ -79,6 +80,18 @@ const GENERATED: &[&str] = &[
 /// How a `.gitignore` line can name a `build` folder.
 const IGNORES_BUILD: &[&str] = &["build", "**/build", "*/build", "build/*", "build/**"];
 const MAX_GITIGNORE_BYTES: u64 = 1024 * 1024;
+/// The project's repository may come from anywhere (a downloaded archive keeps its `.git/config`),
+/// and git runs `core.fsmonitor` from that config when it reads the index. Options given here win
+/// over every config file, including included ones, so nothing the repository names is run, and
+/// folder names are taken literally rather than as pathspec patterns.
+const GIT_HARDENING: &[&str] = &[
+    "--no-optional-locks",
+    "--literal-pathspecs",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+];
 
 /// One project and the folders `purge` can remove from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,7 +238,7 @@ fn walk(
     problems: &mut Vec<String>,
 ) {
     let device = fs::metadata(folder).map(|meta| meta.dev()).ok();
-    let skipped_home = gradle_home.map(Path::to_path_buf);
+    let skipped_home = gradle_home.map(folded);
     let deadline = Instant::now() + MAX_SEARCH_TIME;
     let walk = WalkDir::new(folder)
         .max_depth(MAX_DEPTH)
@@ -240,7 +253,7 @@ fn walk(
                             .file_name
                             .to_str()
                             .is_some_and(|name| NOT_ENTERED.contains(&name))
-                            || skipped_home.as_deref() == Some(entry.path().as_path())
+                            || skipped_home.as_ref() == Some(&folded(&entry.path()))
                             || on_another_volume(entry, device)))
                 })
             });
@@ -323,7 +336,10 @@ fn project_at(
     let mut problems = Vec::new();
     let mut seen = BTreeSet::new();
     for (path, target) in candidates {
-        if gradle_home.is_some_and(|home| path.starts_with(home) || home.starts_with(&path)) {
+        if gradle_home.is_some_and(|home| {
+            let (home, path) = (folded(home), folded(&path));
+            path.starts_with(&home) || home.starts_with(&path)
+        }) {
             problems.push(format!(
                 "{} is not offered: it is, or holds, the folder GRADLE_USER_HOME names",
                 path.display()
@@ -388,7 +404,8 @@ fn tracked_builds(
     let (Some(root_text), true, false) = (root.to_str(), in_repository, builds.is_empty()) else {
         return BTreeSet::new();
     };
-    let mut args = vec!["-C", root_text, "ls-files", "-z", "--"];
+    let mut args = GIT_HARDENING.to_vec();
+    args.extend(["-C", root_text, "ls-files", "-z", "--"]);
     args.extend(builds.iter().map(|(_, relative)| *relative));
     let Ok(listing) = runner.run("git", &args) else {
         return BTreeSet::new();
@@ -855,5 +872,102 @@ mod tests {
             "{:?}",
             found.problems
         );
+    }
+
+    #[test]
+    fn a_planted_fsmonitor_in_the_project_repository_is_never_run() {
+        let fx = Fixture::new();
+        let root = fx.home().join("Documents/App");
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/build/classes");
+        let marker = fx.outside.join("fsmonitor-ran");
+        let script = fx.outside.join("fsmonitor.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        if !git(&["init", "-q"]) {
+            return; // No git here: nothing to run, nothing to test.
+        }
+        assert!(git(&["config", "core.fsmonitor", script.to_str().unwrap()]));
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &SystemRunner::default(),
+            None,
+        );
+
+        assert_eq!(target_of(&found, "build"), "purge.build");
+        assert!(
+            !marker.exists(),
+            "git ran the fsmonitor command from the project's config"
+        );
+    }
+
+    #[test]
+    fn real_git_still_finds_tracked_files_in_a_build_folder() {
+        let fx = Fixture::new();
+        let root = fx.home().join("Documents/App");
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.file("Documents/App/build/classes/Keep.class");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        if !git(&["init", "-q"]) {
+            return; // No git here.
+        }
+        assert!(git(&["add", "-f", "build/classes/Keep.class"]));
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &SystemRunner::default(),
+            None,
+        );
+
+        assert_eq!(target_of(&found, "build"), "purge.build-unsure");
+    }
+
+    #[test]
+    fn the_gradle_home_matches_whatever_its_case() {
+        let fx = Fixture::new();
+        fx.file("Documents/gradle-home/caches/sample/settings.gradle.kts");
+        fx.dir("Documents/gradle-home/caches/sample/build/classes");
+        let canonical = fx
+            .home()
+            .join("Documents/gradle-home")
+            .canonicalize()
+            .unwrap();
+        let shouted = PathBuf::from(
+            canonical
+                .to_str()
+                .unwrap()
+                .replace("gradle-home", "Gradle-Home"),
+        );
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &FakeRunner::failing("no git"),
+            Some(&shouted),
+        );
+
+        assert!(found.projects.is_empty(), "{:?}", found.projects);
     }
 }

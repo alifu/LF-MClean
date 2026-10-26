@@ -80,9 +80,10 @@ the details are written to `~/Library/Logs/lfmclean/crash.log`. Please include i
   names the caches each one uses. If `ps` cannot be run, the review says the check failed instead of
   staying quiet.
 - `purge` looks for projects in `~/Documents`, `~/Developer` and `~/Projects` (or `--paths`). It does
-  not enter other volumes, hidden folders, or the folder `GRADLE_USER_HOME` names, and gives up on a
-  folder after a minute. A `build` folder with files that git tracks, or with content Gradle does not
-  generate, is offered as **caution**, not as safe.
+  not enter other volumes (network shares, mounted disks), hidden folders, or the folder
+  `GRADLE_USER_HOME` names, and stops searching a folder after a minute. A `build` folder with files that git tracks, or with content Gradle does not
+  generate, is offered as **caution**, not as safe. Git is asked with the repository's own hooks and
+  `fsmonitor` turned off, so a downloaded project cannot run anything.
 - The terminal must be at least 60 columns by 12 rows; a smaller window shows a request to enlarge it.
 
 ## Install

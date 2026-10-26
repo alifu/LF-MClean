@@ -17,6 +17,8 @@ pub enum KeepRef {
     Package(KeptPackage),
     /// One path.
     Path(PathBuf),
+    /// Nothing can be kept from this row as a whole; why, and what to do instead.
+    Unavailable(String),
 }
 
 impl KeepRef {
@@ -27,6 +29,7 @@ impl KeepRef {
             Self::Target(id) => keep.targets().any(|kept| kept == *id),
             Self::Package(package) => keep.without_package(package) != *keep,
             Self::Path(path) => keep.without_path(path) != *keep,
+            Self::Unavailable(_) => false,
         }
     }
 
@@ -40,6 +43,8 @@ impl KeepRef {
                 Self::Target(id) => keep.without_target(id),
                 Self::Package(package) => keep.without_package(package),
                 Self::Path(path) => keep.without_path(path),
+                // Never in the list, so never removed from it.
+                Self::Unavailable(_) => keep.clone(),
             });
         }
         match self {
@@ -49,6 +54,7 @@ impl KeepRef {
                 .to_str()
                 .ok_or_else(|| format!("{} is not UTF-8", path.display()))
                 .and_then(|text| keep.with_path(text)),
+            Self::Unavailable(reason) => Err(reason.clone()),
         }
     }
 }

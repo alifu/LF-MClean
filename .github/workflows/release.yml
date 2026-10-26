@@ -1,25 +1,41 @@
 name: Release
 
-# Push a tag such as v1.0.0 (the same number as `version` in Cargo.toml).
+# Push a tag such as v1.0.0 (the same number as `version` in Cargo.toml) on a commit of main.
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+env:
+  # Keep in step with ci.yml.
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
-  release:
-    name: Build and publish
+  # Runs the dependencies' build scripts, so it holds no token that can write.
+  build:
+    name: Test and build
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Tag and Cargo.toml name the same version
         run: sh scripts/release/check-version.sh "${GITHUB_REF_NAME#v}"
 
+      - name: The tagged commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
       - name: Toolchain
-        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup default "$RUST_TOOLCHAIN"
 
       - name: Test
         run: cargo test --locked
@@ -39,19 +55,13 @@ jobs:
           lipo -archs dist/stage/lfmclean
           codesign --verify dist/stage/lfmclean
 
-      - name: Pack the tarball
+      - name: Pack the tarball and write the formula
         run: |
           version="${GITHUB_REF_NAME#v}"
           name="lfmclean-${version}-macos-universal.tar.gz"
           cp LICENSE dist/stage/
           tar -C dist/stage -czf "dist/$name" lfmclean LICENSE
           (cd dist && shasum -a 256 "$name" > "$name.sha256")
-
-      - name: Write the Homebrew formula
-        id: brew
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          name="lfmclean-${version}-macos-universal.tar.gz"
           sha="$(cut -d ' ' -f 1 "dist/$name.sha256")"
           sh scripts/release/make-formula.sh "$version" "$sha" > dist/lfmclean.rb
           {
@@ -62,7 +72,36 @@ jobs:
             echo '```'
             echo
             echo "SHA-256 of \`$name\`: \`$sha\`"
+            echo
+            echo "The binary is ad-hoc signed, not notarized. Downloaded in a browser, it is quarantined:"
+            echo "run \`xattr -d com.apple.quarantine lfmclean\` once. Homebrew installs are not affected."
+            echo "Verify where it was built: \`gh attestation verify $name --repo $GITHUB_REPOSITORY\`."
           } > dist/notes.md
+          rm -r dist/stage
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release
+          path: dist
+
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: dist/*.tar.gz
 
       - name: Publish the release
         env:
@@ -70,18 +109,26 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           name="lfmclean-${version}-macos-universal.tar.gz"
-          gh release create "$GITHUB_REF_NAME" "dist/$name" "dist/$name.sha256" dist/lfmclean.rb \
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            "dist/$name" "dist/$name.sha256" dist/lfmclean.rb \
             --title "lfmclean ${version}" --notes-file dist/notes.md
 
-      # Optional: with a TAP_TOKEN secret (a token that can push to alifu/homebrew-tap) the formula is
-      # updated by itself. Without it, copy dist/lfmclean.rb (attached to the release) to
-      # Formula/lfmclean.rb in the tap.
+      # Optional: with a TAP_TOKEN secret (a fine-grained token that can push only to
+      # alifu/homebrew-tap) the formula is updated by itself. Without it, copy dist/lfmclean.rb
+      # (attached to the release) to Formula/lfmclean.rb in the tap.
       - name: Update the Homebrew tap
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-        if: ${{ env.TAP_TOKEN != '' }}
         run: |
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/alifu/homebrew-tap.git" tap
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "No TAP_TOKEN secret: copy dist/lfmclean.rb to the tap by hand."
+            exit 0
+          fi
+          # The token goes in a header for this clone only, not into a URL saved in .git/config.
+          auth="$(printf 'x-access-token:%s' "$TAP_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=Authorization: Basic $auth" \
+            clone https://github.com/alifu/homebrew-tap.git tap
           mkdir -p tap/Formula
           cp dist/lfmclean.rb tap/Formula/lfmclean.rb
           cd tap
@@ -89,4 +136,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/lfmclean.rb
           git commit -m "lfmclean ${GITHUB_REF_NAME#v}" || exit 0
-          git push
+          git -c "http.extraheader=Authorization: Basic $auth" push

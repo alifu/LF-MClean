@@ -525,7 +525,8 @@ fn resolved(path: &Path) -> PathBuf {
 }
 
 /// APFS ignores case and Unicode normalization, so paths are compared in one form.
-fn folded(path: &Path) -> PathBuf {
+/// The path as APFS compares it: without regard to case or Unicode normalization.
+pub(crate) fn folded(path: &Path) -> PathBuf {
     PathBuf::from(fold_text(&path.to_string_lossy()))
 }
 

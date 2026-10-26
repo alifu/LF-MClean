@@ -56,22 +56,21 @@ fn k_on_a_package_keeps_every_version_and_on_a_version_only_it() {
 }
 
 #[test]
-fn a_package_the_keep_file_cannot_name_is_kept_by_its_folder() {
+fn a_package_the_keep_file_cannot_name_is_not_kept_as_a_whole() {
     let fx = Fixture::new();
     let mut found = crate::tui::testkit::browse();
-    found.packages[0].name = "Odd Name".to_string();
-    let sections = crate::tui::sections::package_sections(
-        &found,
-        &Usage::default(),
-        &KeepList::empty(&fx.env),
-        now(),
-    );
-
-    let group = &sections[0].groups[0];
-
-    assert_eq!(group.label, "Odd Name");
-    assert!(matches!(
-        group.keep_ref,
-        crate::tui::list::KeepRef::Target(_)
+    found.packages[1].name = "Odd Name".to_string();
+    let (opened, _) = app(&fx, Mode::Trash).on_key(Key::Char('2'));
+    let (start, _) = opened.on_event(Event::PackagesScanned(
+        opened.packages_generation,
+        found,
+        Usage::default(),
     ));
+
+    // Down to the second CocoaPods group, which has three versions.
+    let (after, effects) = press(&start, &[Key::Down, Key::Char('k')]);
+
+    assert_eq!(effects, []);
+    assert_eq!(after.keep.unwrap(), KeepList::empty(&fx.env));
+    assert!(after.message.unwrap().contains("keep each version"));
 }

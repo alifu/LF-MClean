@@ -122,7 +122,7 @@ fn package_group(
         label: name,
         detail: format!("{copies} · {users}"),
         safety: Safety::Safe,
-        keep_ref: package_ref(package, None, first_item),
+        keep_ref: group_ref(package, first_item),
         entries: package
             .versions
             .iter()
@@ -155,6 +155,18 @@ fn version_entry(
         label: printable(&version.label),
         detail,
         keep_ref,
+    }
+}
+
+/// Keeps a whole package by name. When the keep file cannot hold the name, one folder is enough
+/// only for a single copy: keeping one folder of several would leave the others unprotected.
+fn group_ref(package: &Package, first_item: &Item) -> KeepRef {
+    match KeptPackage::all_versions(package.manager, &package.name) {
+        Ok(kept) => KeepRef::Package(kept),
+        Err(_) if package.versions.len() == 1 => path_ref(first_item),
+        Err(reason) => KeepRef::Unavailable(format!(
+            "{reason}, so it cannot be kept as a whole; open it and keep each version"
+        )),
     }
 }
 
