@@ -7,6 +7,8 @@ compile_error!("lfmclean only supports macOS");
 
 /// The fixed list of caches lfmclean knows about.
 pub mod catalog;
+/// Removing the picked items.
+pub mod clean;
 /// The command line.
 pub mod cli;
 /// Running other programs.
@@ -29,6 +31,10 @@ pub mod packages;
 pub mod remove;
 /// Finding and measuring caches.
 pub mod scan;
+/// Running tools and free space.
+pub mod system;
+/// The interactive screens.
+pub mod tui;
 
 #[cfg(test)]
 mod testing;

@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   PERMANENT: removed for good                                                    "
+" Apple Silicon | Free space: unknown | Dev caches found: not scanned yet                            "
+"                                                                                                    "
+" ➤ 1. Clean        Xcode, Android, Gradle and Kotlin caches             lfmclean clean              "
+"   2. Packages     Pick CocoaPods and SPM packages to delete or keep    lfmclean packages           "
+"   3. Purge        Build folders of your CMP projects                   lfmclean purge              "
+"   4. Keep list    Caches and packages that are never removed           lfmclean keep               "
+"   5. History      What was removed, and when                           lfmclean history            "
+"   6. Quit                                                                                          "
+"                                                                                                    "
+" The keep list cannot be used, so nothing can be removed: line 2: unknown key `target`              "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" ↑↓ / 1-6 choose   enter open   q quit                                                              "
+"                                                                                                    "

@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: scanning…                                  "
+"                                                                                                    "
+" Scanning Gradle caches…                                                                            "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" ↑↓ move  space tick  →← open/close  k keep  a all safe  n none  enter review  esc menu             "
+"                                                                                                    "

@@ -8,6 +8,7 @@ anyhow = "1.0.104"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.7", features = ["derive"] }
 jwalk = "0.9.0"
+ratatui = "0.30.2"
 rustix = { version = "1.1.5", features = ["fs", "process"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -17,5 +18,6 @@ unicode-normalization = "0.1.26"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
+insta = "1.49.0"
 predicates = "3.1.4"
 tempfile = "3.27.0"

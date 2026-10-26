@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: not scanned yet                            "
+" Found 727.0 MB · Selected 200.0 MB (1 item)                                                        "
+"                                                                                                    "
+" ─ CocoaPods ────────────────────────────────────────────────────────────────────────────────────── "
+" [ ] ▸ Alamofire                                  12.0 MB  ● safe     1 copy · not used by any proje"
+" [~] ▾ Firebase                                  610.0 MB  ● safe     3 copies · used by: MyCMPApp  "
+"     [x] 10.20.0                                 200.0 MB  1 mo ago                                 "
+"     [ ] 10.25.0                                 205.0 MB  in use                                   "
+"     [ ] 11.0.0                                  205.0 MB  1 mo ago                                 "
+" ─ Swift packages ───────────────────────────────────────────────────────────────────────────────── "
+" [ ] ▸ SnapKit                                     9.0 MB  ● safe     1 copy · used by: CatWalk     "
+" ─ Project checkouts ────────────────────────────────────────────────────────────────────────────── "
+" [ ] ▸ Swift packages of Xcode projects (1)       96.0 MB  ● safe     inside DerivedData            "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" ↑↓ move  space tick  →← open/close  k keep  o old versions  u unused  enter review  esc menu       "
+"                                                                                                    "

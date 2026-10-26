@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: 13.5 GB                                    "
+" Cleaning 1 of 3                                                                                    "
+" [████████████████████········································]                                     "
+"                                                                                                    "
+"   ✓ App-abc · 1.5 GB                                                                               "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "

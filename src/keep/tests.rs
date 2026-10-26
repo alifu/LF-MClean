@@ -469,7 +469,6 @@ fn a_kept_path_keeps_the_item_it_is_in_and_the_item_that_is_it() {
                 .join(".android/avd/Pixel.avd")
                 .display()
                 .to_string(),
-            &fx.env,
         )
         .unwrap();
 
@@ -564,15 +563,15 @@ fn simulators_are_kept_by_target_or_by_a_path_around_their_folders() {
         name: "Unavailable simulators (1)".to_string(),
         removal: Removal::SimctlDelete {
             simulators: vec![Simulator {
-                udid: "AAAA".to_string(),
-                folder: devices.join("AAAA"),
+                udid: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_string(),
+                folder: devices.join("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
             }],
         },
         size_bytes: 0,
         partial: false,
         modified: None,
     };
-    let path = |text: &str| KeepList::empty(&fx.env).with_path(text, &fx.env).unwrap();
+    let path = |text: &str| KeepList::empty(&fx.env).with_path(text).unwrap();
 
     assert!(!KeepList::empty(&fx.env).keeps(&item));
     assert!(
@@ -581,9 +580,15 @@ fn simulators_are_kept_by_target_or_by_a_path_around_their_folders() {
             .unwrap()
             .keeps(&item)
     );
-    assert!(path("~/Library/Developer/CoreSimulator/Devices/AAAA").keeps(&item));
+    assert!(
+        path("~/Library/Developer/CoreSimulator/Devices/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")
+            .keeps(&item)
+    );
     assert!(path("~/Library/Developer").keeps(&item));
-    assert!(!path("~/Library/Developer/CoreSimulator/Devices/BBBB").keeps(&item));
+    assert!(
+        !path("~/Library/Developer/CoreSimulator/Devices/BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")
+            .keeps(&item)
+    );
 }
 
 // Changing and saving the list.
@@ -598,8 +603,8 @@ fn saving_and_loading_gives_the_same_list() {
         .with_package(pod("GoogleMaps"))
         .with_package(pod_version("Firebase", "11.0.0"))
         .with_package(spm("SnapKit"))
-        .with_path("~/.android/avd/Pixel.avd", &fx.env)
-        .and_then(|k| k.with_path("/Volumes/Work/keep", &fx.env))
+        .with_path("~/.android/avd/Pixel.avd")
+        .and_then(|k| k.with_path("/Volumes/Work/keep"))
         .unwrap();
 
     keep.save(&fx.env).unwrap();
@@ -674,9 +679,9 @@ fn values_that_could_not_be_read_back_are_refused_before_saving() {
     let keep = KeepList::empty(&fx.env);
 
     assert!(keep.with_target("xcode.archive").is_err());
-    assert!(keep.with_path("/", &fx.env).is_err());
-    assert!(keep.with_path("relative", &fx.env).is_err());
-    assert!(keep.with_path("~/a/../b", &fx.env).is_err());
+    assert!(keep.with_path("/").is_err());
+    assert!(keep.with_path("relative").is_err());
+    assert!(keep.with_path("~/a/../b").is_err());
     assert!(KeptPackage::all_versions(Manager::Pods, "").is_err());
     assert!(KeptPackage::all_versions(Manager::Pods, "a@b").is_err());
     assert!(KeptPackage::version(Manager::Spm, "SnapKit", "").is_err());
@@ -688,7 +693,7 @@ fn a_saved_list_always_loads_again() {
     let fx = Fixture::new();
     let keep = KeepList::empty(&fx.env)
         .with_package(pod("Name-With.Dots_and+plus"))
-        .with_path("/Volumes/Some Disk/x y", &fx.env)
+        .with_path("/Volumes/Some Disk/x y")
         .unwrap();
 
     keep.save(&fx.env).unwrap();
@@ -737,8 +742,8 @@ fn adding_the_same_entry_twice_keeps_one() {
     let keep = KeepList::empty(&fx.env)
         .with_package(spm("SnapKit"))
         .with_package(spm("snapkit"))
-        .with_path("/A/b", &fx.env)
-        .and_then(|k| k.with_path("/a/B", &fx.env))
+        .with_path("/A/b")
+        .and_then(|k| k.with_path("/a/B"))
         .unwrap();
 
     assert_eq!(keep.packages().count(), 1);

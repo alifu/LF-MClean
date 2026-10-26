@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: 13.5 GB                                    "
+" ➤ Xcode                                                                                            "
+"   ✓ App-abc · 1.5 GB                                                                               "
+"   ◎ Lib-def · skipped (kept)                                                                       "
+" ➤ Gradle & Kotlin                                                                                  "
+"   ✗ modules-2 · failed (permission denied)                                                         "
+" ======================================================================                             "
+" Cleanup complete — moved to Trash: 1.5 GB | Items: 3 | Failed: 1                                   "
+" Free space: 42.7 GB now, about 44.2 GB after you empty the Trash                                   "
+" ======================================================================                             "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" enter menu                                                                                         "
+"                                                                                                    "

@@ -12,7 +12,7 @@ use serde::Serialize;
 
 pub use discover::{Candidate, Discovery, Skip, discover};
 pub use emulators::attach_ini_files;
-pub use simulators::{SimctlError, Simulator, unavailable_simulators};
+pub use simulators::{SimctlError, Simulator, is_udid, unavailable_simulators};
 
 /// The group a target is shown under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

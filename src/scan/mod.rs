@@ -424,13 +424,17 @@ mod tests {
     fn unavailable_simulators_are_one_item_removed_with_simctl() {
         let fx = Fixture::new();
         let devices = "Library/Developer/CoreSimulator/Devices";
-        let first = fx.dir(&format!("{devices}/AAAA/data"));
-        let second = fx.dir(&format!("{devices}/BBBB/data"));
+        let first = fx.dir(&format!(
+            "{devices}/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/data"
+        ));
+        let second = fx.dir(&format!(
+            "{devices}/BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB/data"
+        ));
         let listing = format!(
             r#"{{"devices": {{"rt": [
-                {{"udid": "AAAA", "dataPath": "{}"}},
-                {{"udid": "BBBB", "dataPath": "{}"}},
-                {{"udid": "CCCC", "dataPath": "{}/CCCC/data"}}
+                {{"udid": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "dataPath": "{}"}},
+                {{"udid": "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB", "dataPath": "{}"}},
+                {{"udid": "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC", "dataPath": "{}/CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC/data"}}
             ]}}}}"#,
             first.display(),
             second.display(),
@@ -448,7 +452,14 @@ mod tests {
         assert!(matches!(item.removal, Removal::SimctlDelete { .. }));
         let mut udids = item.removal.udids();
         udids.sort_unstable();
-        assert_eq!(udids, ["AAAA", "BBBB", "CCCC"]);
+        assert_eq!(
+            udids,
+            [
+                "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+                "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+                "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC"
+            ]
+        );
         let expected = size::disk_usage(first.parent().unwrap()).bytes
             + size::disk_usage(second.parent().unwrap()).bytes;
         assert_eq!(item.size_bytes, expected);

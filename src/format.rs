@@ -63,6 +63,13 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
+/// `1 item`, `2 items`.
+#[must_use]
+pub fn items(count: usize) -> String {
+    let noun = if count == 1 { "item" } else { "items" };
+    format!("{count} {noun}")
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone};
@@ -123,5 +130,12 @@ mod tests {
     fn printable_text_escapes_control_characters_only() {
         assert_eq!(printable("App-abc ü 📦"), "App-abc ü 📦");
         assert_eq!(printable("a\u{1b}[2Jb\nc"), "a\\u{1b}[2Jb\\u{a}c");
+    }
+
+    #[test]
+    fn item_counts_are_singular_only_for_one() {
+        assert_eq!(items(0), "0 items");
+        assert_eq!(items(1), "1 item");
+        assert_eq!(items(2), "2 items");
     }
 }

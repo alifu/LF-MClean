@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: 13.5 GB                                    "
+" These will be removed:                                                                             "
+"                                                                                                    "
+"  ● safe        1.5 GB  App-abc                                                                     "
+"               /Users/me/xcode.derived-data/App-abc                                                 "
+"  ● safe      400.0 MB  Lib-def                                                                     "
+"               /Users/me/xcode.derived-data/Lib-def                                                 "
+"  ▲ risky     300.0 MB  2026-01-02/App.xcarchive                                                    "
+"               /Users/me/xcode.archives/2026-01-02/App.xcarchive                                    "
+"                                                                                                    "
+" Total: 2.2 GB in 3 items                                                                           "
+" Moves to the Trash                                                                                 "
+" ⚠ Simulators are deleted for good by simctl; they do not go to the Trash.                          "
+"                                                                                                    "
+" Risky items are ticked. Type delete + enter to remove, esc to go back: de                          "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" ↑↓ scroll   esc back                                                                               "
+"                                                                                                    "

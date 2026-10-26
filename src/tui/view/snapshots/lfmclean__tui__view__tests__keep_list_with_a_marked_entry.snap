@@ -1,0 +1,28 @@
+---
+source: src/tui/view/tests.rs
+expression: screen(&app)
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: not scanned yet                            "
+" 3 kept · 1 marked to stop keeping                                                                  "
+"                                                                                                    "
+" 🔒 target   xcode.archives                                                                         " Hidden by multi-width symbols: [(2, " ")]
+" ✗  package  pods:Firebase@11.0.0   (stop keeping)                                                  "
+" 🔒 path     /Volumes/Work/keep                                                                     " Hidden by multi-width symbols: [(2, " ")]
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+"                                                                                                    "
+" ↑↓ move   space mark to stop keeping   enter save   esc back                                       "
+"                                                                                                    "

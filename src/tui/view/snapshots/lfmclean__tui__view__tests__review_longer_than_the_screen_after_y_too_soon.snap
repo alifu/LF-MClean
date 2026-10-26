@@ -1,0 +1,19 @@
+---
+source: src/tui/view/tests.rs
+expression: "screen_of_height(&app, 15)"
+---
+" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" Apple Silicon | Free space: 41.2 GB | Dev caches found: 13.5 GB                                    "
+" These will be removed:  (lines 2–3 of 6)  ↓ for more                                               "
+"                                                                                                    "
+"               /Users/me/xcode.derived-data/App-abc                                                 "
+"  ● safe      400.0 MB  Lib-def                                                                     "
+"                                                                                                    "
+" Total: 3.9 GB in 3 items                                                                           "
+" Moves to the Trash                                                                                 "
+" ⚠ Simulators are deleted for good by simctl; they do not go to the Trash.                          "
+"                                                                                                    "
+" Remove these? y yes · n / esc go back                                                              "
+" Scroll down (↓) to see every item before removing.                                                 "
+" ↑↓ scroll   esc back                                                                               "
+"                                                                                                    "

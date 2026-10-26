@@ -237,7 +237,7 @@ impl KeepList {
             list = list.with_package(package.parse()?);
         }
         for path in &file.paths {
-            list = list.with_path(path, env)?;
+            list = list.with_path(path)?;
         }
         Ok(list)
     }
@@ -397,8 +397,8 @@ impl KeepList {
     ///
     /// # Errors
     /// When the path is relative, contains `.` or `..`, or is `/`.
-    pub fn with_path(&self, text: &str, env: &Env) -> Result<Self, String> {
-        let path = kept_path(text, env)?;
+    pub fn with_path(&self, text: &str) -> Result<Self, String> {
+        let path = kept_path(text, &self.home)?;
         let mut next = self.without_path(&path);
         next.paths.insert(path);
         Ok(next)
@@ -474,13 +474,13 @@ fn dangling_link(path: &Path) -> Option<PathBuf> {
 }
 
 /// `~/x` or an absolute path, with `.` and `..` refused so the path means what it says.
-fn kept_path(text: &str, env: &Env) -> Result<PathBuf, String> {
+fn kept_path(text: &str, home: &Path) -> Result<PathBuf, String> {
     // `components()` quietly drops `.`, so the text itself is checked.
     if text.split('/').any(|part| part == "." || part == "..") {
         return Err(format!("path {text:?} must not contain `.` or `..`"));
     }
     let path = match text.strip_prefix(HOME_PREFIX) {
-        Some(rest) => env.home().join(rest),
+        Some(rest) => home.join(rest),
         None => PathBuf::from(text),
     };
     if !path.is_absolute() {

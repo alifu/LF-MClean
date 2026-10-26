@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use super::{Item, Removal, Report, Skipped, TargetReport};
 use crate::catalog::{Category, Safety};
-use crate::format::{age, human_size, printable};
+use crate::format::{age, human_size, items, printable};
 
 const SAFETY_WIDTH: usize = 7;
 const COLUMN_GAP: &str = "  ";
@@ -79,9 +79,9 @@ fn rows_for(target: &TargetReport, now: DateTime<FixedOffset>, with_items: bool)
         label: format!("  {}", target.target.name),
         size: size_text(target.total_bytes(), partial),
         rest: format!(
-            "{:<SAFETY_WIDTH$}{COLUMN_GAP}{count} {}",
+            "{:<SAFETY_WIDTH$}{COLUMN_GAP}{}",
             target.target.safety.label(),
-            if count == 1 { "item" } else { "items" }
+            items(count)
         ),
     };
     let items = target.items.iter().filter(|_| with_items).map(|item| Row {
@@ -258,8 +258,8 @@ mod tests {
             name: name.to_string(),
             removal: Removal::SimctlDelete {
                 simulators: vec![Simulator {
-                    udid: "AAAA".to_string(),
-                    folder: "/Users/x/Library/Developer/CoreSimulator/Devices/AAAA".into(),
+                    udid: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_string(),
+                    folder: "/Users/x/Library/Developer/CoreSimulator/Devices/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
                 }],
             },
             size_bytes: bytes,
@@ -388,7 +388,10 @@ Total: 10.1 GB+
         assert_eq!(first["total_bytes"], 1_900_000_000_u64);
         assert_eq!(first["items"][0]["name"], "App-abc");
         assert_eq!(first["items"][0]["removal"], "simctl-delete");
-        assert_eq!(first["items"][0]["udids"], serde_json::json!(["AAAA"]));
+        assert_eq!(
+            first["items"][0]["udids"],
+            serde_json::json!(["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"])
+        );
         assert_eq!(first["items"][0]["paths"], serde_json::json!([]));
         assert_eq!(first["items"][0]["partial"], false);
         assert_eq!(value["targets"][2]["items"][0]["partial"], true);
