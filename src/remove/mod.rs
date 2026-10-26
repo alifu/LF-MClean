@@ -163,12 +163,11 @@ fn combine(
 mod tests {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::process::Command;
 
     use super::*;
     use crate::guard::check;
     use crate::oplog::Stage;
-    use crate::testing::Fixture;
+    use crate::testing::{Fixture, MountedImage};
 
     const SIZE: u64 = 1234;
     const GRADLE_CACHES: &str = ".gradle/caches";
@@ -458,38 +457,13 @@ mod tests {
         let item = fx.dir(".gradle/caches/x");
         let mount = item.join("mounted");
         fs::create_dir(&mount).unwrap();
-        let image = fx.outside.join("volume.dmg");
-        let hdiutil = |args: &[&str]| {
-            let status = Command::new("hdiutil").args(args).status().unwrap();
-            assert!(status.success(), "hdiutil {args:?} failed");
-        };
-        let (image_arg, mount_arg) = (image.to_str().unwrap(), mount.to_str().unwrap());
-        hdiutil(&[
-            "create",
-            "-size",
-            "4m",
-            "-fs",
-            "APFS",
-            "-volname",
-            "lfmclean-test",
-            "-quiet",
-            image_arg,
-        ]);
-        hdiutil(&[
-            "attach",
-            image_arg,
-            "-mountpoint",
-            mount_arg,
-            "-nobrowse",
-            "-quiet",
-        ]);
+        let _volume = MountedImage::attach(&fx.outside.join("volume.dmg"), &mount);
         fs::write(mount.join("other-volume.txt"), "keep me").unwrap();
         let log = open_log(&fx);
 
         let result = remove(&fx, &log, Mode::Permanent, &root, &item);
 
         let kept = mount.join("other-volume.txt").exists();
-        hdiutil(&["detach", mount_arg, "-quiet"]);
         assert!(matches!(result, Err(RemoveError::Io { .. })));
         assert!(kept, "a file on the other volume was removed");
     }
