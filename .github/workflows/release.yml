@@ -1,0 +1,92 @@
+name: Release
+
+# Push a tag such as v1.0.0 (the same number as `version` in Cargo.toml).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag and Cargo.toml name the same version
+        run: sh scripts/release/check-version.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+
+      - name: Join into one universal binary (ad-hoc signed)
+        run: |
+          mkdir -p dist/stage
+          lipo -create -output dist/stage/lfmclean \
+            target/aarch64-apple-darwin/release/lfmclean \
+            target/x86_64-apple-darwin/release/lfmclean
+          codesign --force -s - dist/stage/lfmclean
+          lipo -archs dist/stage/lfmclean
+          codesign --verify dist/stage/lfmclean
+
+      - name: Pack the tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="lfmclean-${version}-macos-universal.tar.gz"
+          cp LICENSE dist/stage/
+          tar -C dist/stage -czf "dist/$name" lfmclean LICENSE
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+
+      - name: Write the Homebrew formula
+        id: brew
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="lfmclean-${version}-macos-universal.tar.gz"
+          sha="$(cut -d ' ' -f 1 "dist/$name.sha256")"
+          sh scripts/release/make-formula.sh "$version" "$sha" > dist/lfmclean.rb
+          {
+            echo "Install with Homebrew:"
+            echo
+            echo '```'
+            echo "brew install alifu/tap/lfmclean"
+            echo '```'
+            echo
+            echo "SHA-256 of \`$name\`: \`$sha\`"
+          } > dist/notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="lfmclean-${version}-macos-universal.tar.gz"
+          gh release create "$GITHUB_REF_NAME" "dist/$name" "dist/$name.sha256" dist/lfmclean.rb \
+            --title "lfmclean ${version}" --notes-file dist/notes.md
+
+      # Optional: with a TAP_TOKEN secret (a token that can push to alifu/homebrew-tap) the formula is
+      # updated by itself. Without it, copy dist/lfmclean.rb (attached to the release) to
+      # Formula/lfmclean.rb in the tap.
+      - name: Update the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        if: ${{ env.TAP_TOKEN != '' }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/alifu/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp dist/lfmclean.rb tap/Formula/lfmclean.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lfmclean.rb
+          git commit -m "lfmclean ${GITHUB_REF_NAME#v}" || exit 0
+          git push

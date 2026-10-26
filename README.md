@@ -3,11 +3,27 @@
 An interactive terminal cleaner for the caches of mobile developers on macOS: Xcode, Android, Gradle, Kotlin/Native,
 CocoaPods and Swift Package Manager.
 
+## Safety model
+
+- Everything is moved to the **Trash** unless you pass `--permanent`. Simulators are the exception: `simctl`
+  deletes them for good, and the review says so.
+- Only a fixed list of cache folders inside your home folder is ever offered; every path is checked again
+  just before it is removed.
+- You review what is ticked before anything happens. Risky items (emulators, system images, archives)
+  need you to type `delete`.
+- The [keep list](#keeping-things) is checked last and wins over everything.
+
 > **Status:** pre-1.0. The interactive cleaner, `purge`, the keep list and the removal log work.
 
 ## Usage
 
 ```bash
+lfmclean                  # the menu: Clean, Packages, Purge, Keep list, History
+lfmclean clean|packages|purge|keep|history   # open a screen directly
+lfmclean clean --ids xcode.derived-data,gradle.caches --yes   # no screens, for scripts
+lfmclean purge --paths ~/Code --json          # project build folders found, nothing removed
+lfmclean --dry-run        # on any command: show what would be removed, remove nothing
+lfmclean --permanent      # remove for good instead of moving to the Trash
 lfmclean scan             # caches found and their sizes, grouped like Xcode / Android / Gradle & Kotlin
 lfmclean scan --items     # the same, with every item listed under its cache
 lfmclean scan --json      # everything as JSON, with the paths of each item
@@ -71,13 +87,17 @@ the details are written to `~/Library/Logs/lfmclean/crash.log`. Please include i
 
 ## Install
 
-Planned (after v1.0.0):
-
 ```bash
 brew install alifu/tap/lfmclean
 brew upgrade lfmclean
 brew uninstall lfmclean
 ```
+
+Or download `lfmclean-<version>-macos-universal.tar.gz` from the
+[releases](https://github.com/alifu/LF-MClean/releases) page (check it against the `.sha256` file) and put
+`lfmclean` on your `PATH`. The binary is ad-hoc signed, not notarized; Homebrew's download is not
+quarantined, so it runs at once. If you download it in a browser, run
+`xattr -d com.apple.quarantine lfmclean` once.
 
 ## Build
 

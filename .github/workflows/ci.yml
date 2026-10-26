@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: fmt, clippy, test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic
+      - name: Test
+        run: cargo test --locked
+
+  release-scripts:
+    name: Release scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: sh -n scripts/release/check-version.sh && sh -n scripts/release/make-formula.sh
+      - name: Formula can be made
+        run: sh scripts/release/make-formula.sh "$(sh scripts/release/check-version.sh)" "$(printf 'x' | sha256sum | cut -d ' ' -f 1)"
