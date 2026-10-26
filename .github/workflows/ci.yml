@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - name: Toolchain
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt clippy
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
           rustup default "$RUST_TOOLCHAIN"
       - name: Format
         run: cargo fmt --check
