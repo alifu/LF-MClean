@@ -19,6 +19,8 @@ pub mod env;
 pub mod format;
 /// Path checks before any removal.
 pub mod guard;
+/// Commands without screens.
+pub mod headless;
 /// What is never removed.
 pub mod keep;
 /// Trash, permanent or dry run.

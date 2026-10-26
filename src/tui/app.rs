@@ -419,6 +419,19 @@ impl App {
         }
     }
 
+    /// The app opened on `screen` as if its menu entry had been chosen; the menu if there is none.
+    #[must_use]
+    pub fn start_at(self, screen: Screen) -> (Self, Vec<Effect>) {
+        // The menu is already showing, and its last entry (Quit) also names it.
+        if screen == Screen::Menu {
+            return (self, Vec::new());
+        }
+        match MENU.iter().position(|&(entry, ..)| entry == screen) {
+            Some(index) => self.open(index),
+            None => (self, Vec::new()),
+        }
+    }
+
     /// Opens a menu entry, starting what it needs.
     #[must_use]
     pub fn open(self, index: usize) -> (Self, Vec<Effect>) {

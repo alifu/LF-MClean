@@ -49,6 +49,27 @@ fn the_menu_moves_and_opens_with_numbers_or_enter() {
 }
 
 #[test]
+fn starting_at_a_screen_opens_it_and_starts_what_it_needs() {
+    let fx = Fixture::new();
+
+    let (clean, clean_effects) = app(&fx, Mode::Trash).start_at(Screen::Clean);
+    let (history, history_effects) = app(&fx, Mode::Trash).start_at(Screen::History);
+    let (keep, keep_effects) = app(&fx, Mode::Trash).start_at(Screen::Keep);
+    let (menu, menu_effects) = app(&fx, Mode::Trash).start_at(Screen::Menu);
+
+    assert_eq!(
+        (clean.screen, clean_effects),
+        (Screen::Clean, vec![Effect::Scan(0)])
+    );
+    assert_eq!(
+        (history.screen, history_effects),
+        (Screen::History, vec![Effect::LoadHistory])
+    );
+    assert_eq!((keep.screen, keep_effects), (Screen::Keep, vec![]));
+    assert_eq!((menu.screen, menu_effects), (Screen::Menu, vec![]));
+}
+
+#[test]
 fn quit_from_the_menu_and_back_to_it_from_screens() {
     let fx = Fixture::new();
     let start = app(&fx, Mode::Trash);

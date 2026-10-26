@@ -25,6 +25,7 @@ use ratatui::crossterm::event::{
     self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 
+pub use app::Screen;
 use app::{App, Effect, Event, Key};
 
 use crate::clean::Cleaner;
@@ -46,7 +47,7 @@ const FRAME_LINES: u16 = 4;
 ///
 /// # Errors
 /// When the terminal cannot be used.
-pub fn run(env: &Env, mode: Mode) -> Result<()> {
+pub fn run(env: &Env, mode: Mode, start: Screen) -> Result<()> {
     let keep = KeepList::load(env).map_err(|err| err.to_string());
     let app = App::new(
         mode,
@@ -55,10 +56,14 @@ pub fn run(env: &Env, mode: Mode) -> Result<()> {
         free_space(env.home()).ok(),
         Local::now().fixed_offset(),
     );
+    let (app, first) = app.start_at(start);
     // Unbounded is fine: at most one event per target or removed item.
     let (sender, receiver) = mpsc::channel();
     spawn_tools_check(&sender);
     let mut terminal = ratatui::try_init()?;
+    for effect in first {
+        perform(effect, env, mode, &sender);
+    }
     restore_only_for_main_thread_panics();
     let result = event_loop(&mut terminal, app, env, &sender, &receiver);
     ratatui::restore();

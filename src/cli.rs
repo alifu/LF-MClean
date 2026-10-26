@@ -2,16 +2,17 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::Local;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::catalog::Target;
 use crate::command::SystemRunner;
 use crate::env::Env;
+use crate::headless::{self, CleanOptions};
 use crate::mode::Mode;
 use crate::scan::{Scanner, render};
-use crate::tui;
+use crate::tui::{self, Screen};
 
 const CLEAR_LINE: &str = "\r\x1b[K";
 
@@ -56,6 +57,30 @@ pub enum Command {
         #[arg(long)]
         items: bool,
     },
+    /// Pick caches to remove. With `--ids`, remove them without the screens.
+    Clean {
+        /// Remove these caches (ids from `lfmclean scan --json`), separated by commas.
+        #[arg(long, value_delimiter = ',', value_name = "ID,ID")]
+        ids: Vec<String>,
+        /// Agree to the removal; without it `--ids` only shows what it would remove.
+        #[arg(long, requires = "ids")]
+        yes: bool,
+        /// Also agree to remove risky caches (emulators, system images, archives).
+        #[arg(long, requires = "yes")]
+        allow_risky: bool,
+    },
+    /// Browse `CocoaPods` and Swift packages to delete or keep.
+    Packages,
+    /// Find and remove the build folders of your projects.
+    Purge,
+    /// Show and edit what is never removed.
+    Keep,
+    /// Show what was removed.
+    History {
+        /// Print the log as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Runs the command, writing its result to `out`.
@@ -65,15 +90,51 @@ pub enum Command {
 pub fn run(cli: &Cli, out: &mut impl Write) -> Result<()> {
     match &cli.command {
         Some(Command::Scan { json, items }) => scan(*json, *items, out),
-        None if io::stdout().is_terminal() && io::stdin().is_terminal() => {
-            tui::run(&Env::from_system()?, cli.mode())
+        Some(Command::Clean {
+            ids,
+            yes,
+            allow_risky,
+        }) if !ids.is_empty() => {
+            let options = CleanOptions {
+                yes: *yes,
+                allow_risky: *allow_risky,
+            };
+            let runner = SystemRunner::default();
+            headless::clean_ids(&Env::from_system()?, &runner, cli.mode(), ids, options, out)
         }
+        Some(Command::History { json }) if *json || !is_interactive() => {
+            headless::history(&Env::from_system()?, *json, out)
+        }
+        Some(command) => screen(command, cli.mode()),
+        None if is_interactive() => tui::run(&Env::from_system()?, cli.mode(), Screen::Menu),
         None => {
             Cli::command().write_help(out)?;
             writeln!(out)?;
             Ok(())
         }
     }
+}
+
+fn is_interactive() -> bool {
+    io::stdout().is_terminal() && io::stdin().is_terminal()
+}
+
+/// Opens the screen a command is named after; the screens need a terminal.
+fn screen(command: &Command, mode: Mode) -> Result<()> {
+    let screen = match command {
+        Command::Scan { .. } => bail!("scan has no screen"),
+        Command::Clean { .. } => Screen::Clean,
+        Command::Packages => Screen::Packages,
+        Command::Purge => Screen::Purge,
+        Command::Keep => Screen::Keep,
+        Command::History { .. } => Screen::History,
+    };
+    if !is_interactive() {
+        bail!(
+            "this command needs a terminal; for scripts use `scan --json`, `clean --ids` or `history --json`"
+        );
+    }
+    tui::run(&Env::from_system()?, mode, screen)
 }
 
 fn scan(json: bool, items: bool, out: &mut impl Write) -> Result<()> {
@@ -117,5 +178,32 @@ mod tests {
     #[test]
     fn dry_run_and_permanent_cannot_be_combined() {
         assert!(Cli::try_parse_from(["lfmclean", "--dry-run", "--permanent"]).is_err());
+    }
+
+    #[test]
+    fn clean_ids_split_on_commas_and_need_yes_for_allow_risky() {
+        let cli = Cli::try_parse_from(["lfmclean", "clean", "--ids", "a.b,c.d", "--yes"]).unwrap();
+
+        let Some(Command::Clean {
+            ids,
+            yes,
+            allow_risky,
+        }) = cli.command
+        else {
+            panic!("{cli:?}")
+        };
+        assert_eq!(
+            (ids, yes, allow_risky),
+            (vec!["a.b".into(), "c.d".into()], true, false)
+        );
+        assert!(Cli::try_parse_from(["lfmclean", "clean", "--allow-risky"]).is_err());
+        assert!(Cli::try_parse_from(["lfmclean", "clean", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn every_screen_has_a_subcommand() {
+        for name in ["clean", "packages", "purge", "keep", "history"] {
+            assert!(Cli::try_parse_from(["lfmclean", name]).is_ok(), "{name}");
+        }
     }
 }
