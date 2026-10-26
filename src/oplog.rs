@@ -81,6 +81,64 @@ pub struct LogContents {
     pub damaged_lines: Vec<usize>,
 }
 
+/// How one removal ended, as the history shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ending {
+    /// A `finished` line without an error.
+    Done,
+    /// A `finished` line with this error.
+    Failed(String),
+    /// A `started` line that no `finished` line followed, such as a crash in the middle.
+    Interrupted,
+}
+
+/// One removal for the history: the line that tells about it and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRow<'a> {
+    /// The `finished` line, or the `started` line of an interrupted removal.
+    pub entry: &'a LogEntry,
+    /// How it ended.
+    pub ending: Ending,
+}
+
+impl LogContents {
+    /// Every removal, newest first. A `started` line with no later `finished` line for the same
+    /// path counts as interrupted.
+    #[must_use]
+    pub fn removals(&self) -> Vec<HistoryRow<'_>> {
+        let mut open: Vec<usize> = Vec::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            match entry.stage {
+                Stage::Started => open.push(index),
+                Stage::Finished => {
+                    if let Some(at) = open
+                        .iter()
+                        .rposition(|&started| self.entries[started].path == entry.path)
+                    {
+                        open.remove(at);
+                    }
+                }
+            }
+        }
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, entry)| match entry.stage {
+                Stage::Started if open.contains(&index) => Some(HistoryRow {
+                    entry,
+                    ending: Ending::Interrupted,
+                }),
+                Stage::Started => None,
+                Stage::Finished => Some(HistoryRow {
+                    entry,
+                    ending: entry.error.clone().map_or(Ending::Done, Ending::Failed),
+                }),
+            })
+            .collect()
+    }
+}
+
 /// The removal log at `~/Library/Logs/lfmclean/clean.log`.
 pub struct OpLog {
     file: PathBuf,
@@ -206,6 +264,40 @@ mod tests {
         let contents = log.read_all().unwrap();
         assert_eq!(contents.entries, vec![first, second]);
         assert_eq!(contents.damaged_lines, Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_started_line_without_a_finished_line_is_interrupted() {
+        let a = LogEntry::started(noon(), Path::new("/a"), Mode::Trash, 10);
+        let a_done = LogEntry::finished(noon(), Path::new("/a"), Mode::Trash, 10, None);
+        let b = LogEntry::started(noon(), Path::new("/b"), Mode::Trash, 20);
+        let c = LogEntry::started(noon(), Path::new("/c"), Mode::Trash, 30);
+        let c_failed = LogEntry::finished(
+            noon(),
+            Path::new("/c"),
+            Mode::Trash,
+            30,
+            Some("busy".into()),
+        );
+        let contents = LogContents {
+            entries: vec![a, a_done, c, c_failed, b],
+            damaged_lines: vec![],
+        };
+
+        let endings: Vec<_> = contents
+            .removals()
+            .into_iter()
+            .map(|r| (r.entry.path.as_str(), r.ending))
+            .collect();
+
+        assert_eq!(
+            endings,
+            [
+                ("/b", Ending::Interrupted),
+                ("/c", Ending::Failed("busy".into())),
+                ("/a", Ending::Done),
+            ]
+        );
     }
 
     #[test]

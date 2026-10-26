@@ -71,6 +71,14 @@ impl Review {
         .with_body_rows(body_rows)
     }
 
+    /// The review with one more warning shown before the items.
+    #[must_use]
+    pub fn with_warning(self, warning: String) -> Self {
+        let mut warnings = self.warnings.clone();
+        warnings.push(warning);
+        Self { warnings, ..self }.with_body_rows(self.body_rows)
+    }
+
     /// The review on a screen body this tall; what fits is counted as seen.
     #[must_use]
     pub fn with_body_rows(self, body_rows: usize) -> Self {

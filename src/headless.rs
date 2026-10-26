@@ -11,7 +11,7 @@ use crate::env::Env;
 use crate::format::{human_size, items, printable};
 use crate::keep::KeepList;
 use crate::mode::Mode;
-use crate::oplog::{LogContents, OpLog, Stage};
+use crate::oplog::{Ending, LogContents, OpLog};
 use crate::scan::{Item, Removal, Scanner};
 use crate::system::{running_tools, tools_using};
 
@@ -99,8 +99,14 @@ fn require_permanent_for_simulators(found: &[Item], mode: Mode) -> Result<()> {
 
 /// The same warning the screens give, on stderr; it does not stop the run.
 fn warn_about_running_tools(runner: &dyn CommandRunner, targets: &[&Target]) {
-    let Ok(running) = running_tools(runner) else {
-        return;
+    let running = match running_tools(runner) {
+        Ok(running) => running,
+        Err(err) => {
+            eprintln!(
+                "warning: running apps could not be checked ({err}); make sure Xcode, Android Studio and Gradle are closed."
+            );
+            return;
+        }
     };
     for target in targets {
         for tool in tools_using(&running, target.id) {
@@ -293,15 +299,15 @@ fn history_json(contents: &LogContents) -> Result<String> {
 
 fn history_text(contents: &LogContents) -> String {
     let mut lines: Vec<String> = contents
-        .entries
+        .removals()
         .iter()
-        .rev()
-        .filter(|e| e.stage == Stage::Finished)
-        .map(|entry| {
-            let failure = entry
-                .error
-                .as_ref()
-                .map_or_else(String::new, |err| format!("  FAILED: {}", printable(err)));
+        .map(|removal| {
+            let entry = removal.entry;
+            let failure = match &removal.ending {
+                Ending::Done => String::new(),
+                Ending::Failed(err) => format!("  FAILED: {}", printable(err)),
+                Ending::Interrupted => "  INTERRUPTED".to_string(),
+            };
             format!(
                 "{}  {:<9}  {:>9}  {}{failure}",
                 entry.time.format("%Y-%m-%d %H:%M"),
@@ -328,7 +334,7 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::oplog::LogEntry;
+    use crate::oplog::{LogEntry, Stage};
 
     fn finished(error: Option<&str>) -> LogEntry {
         let time = chrono::FixedOffset::east_opt(0)
@@ -356,6 +362,23 @@ mod tests {
             "2026-10-26 09:05  trash         2.0 MB  /x/y  FAILED: busy\n\
              2026-10-26 09:05  trash         2.0 MB  /x/y\n\
              1 line of the log could not be read.\n"
+        );
+    }
+
+    #[test]
+    fn history_text_marks_a_removal_that_never_finished() {
+        let started = LogEntry {
+            stage: Stage::Started,
+            ..finished(None)
+        };
+        let contents = LogContents {
+            entries: vec![started],
+            damaged_lines: vec![],
+        };
+
+        assert_eq!(
+            history_text(&contents),
+            "2026-10-26 09:05  trash         2.0 MB  /x/y  INTERRUPTED\n"
         );
     }
 

@@ -8,6 +8,7 @@ use thiserror::Error;
 
 const ROOT_UID: u32 = 0;
 const LOG_DIR: &str = "Library/Logs/lfmclean";
+const CRASH_LOG: &str = "crash.log";
 
 /// Why the environment cannot be used.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -82,6 +83,12 @@ impl Env {
     #[must_use]
     pub fn log_dir(&self) -> PathBuf {
         self.home.join(LOG_DIR)
+    }
+
+    /// Where a background thread's panic is written.
+    #[must_use]
+    pub fn crash_log(&self) -> PathBuf {
+        self.log_dir().join(CRASH_LOG)
     }
 }
 

@@ -5,19 +5,17 @@
 use std::fs;
 use std::path::Path;
 
-/// Gradle files that make a folder a Gradle project or module.
-const GRADLE_FILES: &[&str] = &[
-    "build.gradle",
-    "build.gradle.kts",
-    "settings.gradle",
-    "settings.gradle.kts",
-];
+/// Gradle files that name the root of a build.
+pub(crate) const SETTINGS_FILES: &[&str] = &["settings.gradle", "settings.gradle.kts"];
+/// Gradle files that make a folder a module.
+pub(crate) const MODULE_FILES: &[&str] = &["build.gradle", "build.gradle.kts"];
 /// The folder of the iOS app of a Kotlin Multiplatform project.
-const IOS_APP: &str = "iosApp";
+pub(crate) const IOS_APP: &str = "iosApp";
 const XCODE_SUFFIXES: &[&str] = &[".xcodeproj", ".xcworkspace"];
 const PODFILE: &str = "Podfile";
 /// A project is searched this many folders deep for modules.
-pub(super) const MAX_DEPTH_IN_PROJECT: usize = 8;
+/// `purge` searches this deep too, so what it offers is never deeper than the guard accepts.
+pub(crate) const MAX_DEPTH_IN_PROJECT: usize = 8;
 
 /// True when `entry` (inside `root`) is a folder `purge` may remove.
 ///
@@ -40,13 +38,16 @@ pub(super) fn is_removable_project_folder(entry: &Path, root: &Path) -> bool {
         return false;
     }
     match name {
-        "build" => {
-            has_any(parent, GRADLE_FILES) || (is_ios_app(parent) && has_xcode_project(parent))
-        }
-        ".gradle" | ".kotlin" => parent == root && has_any(parent, GRADLE_FILES),
+        "build" => is_gradle_folder(parent) || (is_ios_app(parent) && has_xcode_project(parent)),
+        ".gradle" | ".kotlin" => parent == root && is_gradle_folder(parent),
         "Pods" => is_ios_app(parent) && has_file(parent, PODFILE),
         _ => false,
     }
+}
+
+/// True when `folder` has a Gradle settings or module file: a Gradle build or one of its modules.
+fn is_gradle_folder(folder: &Path) -> bool {
+    has_any(folder, SETTINGS_FILES) || has_any(folder, MODULE_FILES)
 }
 
 fn is_ios_app(folder: &Path) -> bool {

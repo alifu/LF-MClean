@@ -13,6 +13,8 @@ pub mod clean;
 pub mod cli;
 /// Running other programs.
 pub mod command;
+/// Panics of background threads, kept for the bug report.
+pub mod crashlog;
 /// Home folder and user.
 pub mod env;
 /// Sizes and ages as people read them.

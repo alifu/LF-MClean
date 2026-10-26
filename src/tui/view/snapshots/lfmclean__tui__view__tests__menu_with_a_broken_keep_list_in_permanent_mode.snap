@@ -2,7 +2,7 @@
 source: src/tui/view/tests.rs
 expression: screen(&app)
 ---
-" LF-MClean  v0.1.0   PERMANENT: removed for good                                                    "
+" LF-MClean  vX.Y.Z   PERMANENT: removed for good                                                    "
 " Apple Silicon | Free space: unknown | Dev caches found: not scanned yet                            "
 "                                                                                                    "
 " ➤ 1. Clean        Xcode, Android, Gradle and Kotlin caches             lfmclean clean              "

@@ -2,7 +2,7 @@
 source: src/tui/view/tests.rs
 expression: screen(&app)
 ---
-" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" LF-MClean  vX.Y.Z   Moves to the Trash                                                             "
 " Apple Silicon | Free space: 41.2 GB | Dev caches found: not scanned yet                            "
 " Found 1.4 GB · Selected 900.0 MB (1 item)                                                          "
 "                                                                                                    "
@@ -24,5 +24,5 @@ expression: screen(&app)
 "                                                                                                    "
 "                                                                                                    "
 "                                                                                                    "
-" ↑↓ move  space tick  →← open/close  k keep  a all safe  n none  enter review  esc menu             "
+" ↑↓ move  space tick  →← open/close  k keep  a all safe  n none  r refresh  enter review  esc menu  "
 "                                                                                                    "

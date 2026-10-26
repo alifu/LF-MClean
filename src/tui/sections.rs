@@ -116,14 +116,13 @@ fn package_group(
         format!("used by: {}", printable(&package.used_by.join(", ")))
     };
     let name = printable(&package.name);
-    let all_versions = KeptPackage::all_versions(package.manager, &package.name).ok();
     let first_item = &package.versions[0].item;
     Group {
         key: format!("{}:{}", package.manager.key(), package.name.to_lowercase()),
         label: name,
         detail: format!("{copies} · {users}"),
         safety: Safety::Safe,
-        keep_ref: all_versions.map_or_else(|| path_ref(first_item), KeepRef::Package),
+        keep_ref: package_ref(package, None, first_item),
         entries: package
             .versions
             .iter()
@@ -144,12 +143,10 @@ fn version_entry(
     } else {
         aged(&version.item, now)
     };
-    let keep_ref = crate::packages::identify(&version.item)
-        .and_then(|id| match id.version {
-            Some(v) => KeptPackage::version(package.manager, &package.name, &v).ok(),
-            None => KeptPackage::all_versions(package.manager, &package.name).ok(),
-        })
-        .map_or_else(|| path_ref(&version.item), KeepRef::Package);
+    let keep_ref = match crate::packages::identify(&version.item) {
+        Some(id) => package_ref(package, id.version.as_deref(), &version.item),
+        None => path_ref(&version.item),
+    };
     Entry {
         kept: keep.keeps(&version.item),
         in_use: version.in_use,
@@ -159,6 +156,17 @@ fn version_entry(
         detail,
         keep_ref,
     }
+}
+
+/// Keeps a package by name (and version), as the keep file writes it. A name or version the file
+/// cannot hold (one with a space, `:` or `@`, which a folder on disk may have) is kept by the
+/// item's folder instead; that is the only way this can fail, and it still protects the item.
+fn package_ref(package: &Package, version: Option<&str>, item: &Item) -> KeepRef {
+    let kept = match version {
+        Some(version) => KeptPackage::version(package.manager, &package.name, version),
+        None => KeptPackage::all_versions(package.manager, &package.name),
+    };
+    kept.map_or_else(|_| path_ref(item), KeepRef::Package)
 }
 
 pub(super) fn entry(item: &Item, label: String, detail: String, keep: &KeepList) -> Entry {

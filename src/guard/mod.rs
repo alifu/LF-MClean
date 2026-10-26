@@ -7,6 +7,8 @@
 mod project;
 mod rules;
 
+pub(crate) use project::{IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES};
+
 use std::fs::{self, Metadata};
 use std::io;
 use std::os::unix::fs::MetadataExt;

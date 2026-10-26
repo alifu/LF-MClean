@@ -11,7 +11,7 @@ use crate::catalog::{self, Category};
 use crate::clean::Outcome;
 use crate::format::{human_size, items, printable};
 use crate::mode::Mode;
-use crate::oplog::Stage;
+use crate::oplog::Ending;
 use crate::tui::app::{App, Loading};
 use crate::tui::keep_screen::{KeepLine, lines as keep_lines};
 use crate::tui::review::{CONFIRM_WORD, Review};
@@ -244,16 +244,16 @@ pub(super) fn history(frame: &mut Frame, area: Rect, app: &App) {
         Loading::Done(result) => match result.as_ref() {
             Ok(contents) => {
                 let mut lines: Vec<Line> = contents
-                    .entries
+                    .removals()
                     .iter()
-                    .rev()
-                    .filter(|e| e.stage == Stage::Finished)
                     .skip(app.history_scroll)
-                    .map(|e| {
-                        let result = e
-                            .error
-                            .as_ref()
-                            .map_or_else(String::new, |err| format!("  ✗ {}", printable(err)));
+                    .map(|row| {
+                        let e = row.entry;
+                        let result = match &row.ending {
+                            Ending::Done => String::new(),
+                            Ending::Failed(err) => format!("  ✗ {}", printable(err)),
+                            Ending::Interrupted => "  ✗ interrupted".to_string(),
+                        };
                         Line::from(format!(
                             " {}  {:<9}  {:>9}  {}{result}",
                             e.time.format("%Y-%m-%d %H:%M"),

@@ -364,6 +364,11 @@ impl KeepList {
     pub fn with_target(&self, id: &str) -> Result<Self, String> {
         let target =
             catalog::find(id).ok_or_else(|| format!("{id:?} is not a target lfmclean knows"))?;
+        if id.starts_with("purge.") {
+            return Err(format!(
+                "{id:?} is a project folder found by purge; keep the project folder with a path instead"
+            ));
+        }
         let mut next = self.clone();
         next.targets.insert(target.id);
         Ok(next)

@@ -3,21 +3,23 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
 use jwalk::WalkDir;
 
+use crate::command::{CommandRunner, SystemRunner};
 use crate::env::Env;
-use crate::guard::{self, SafePath};
+use crate::guard::{self, IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES, SafePath};
 use crate::packages::DEFAULT_PROJECT_FOLDERS;
 use crate::scan::size::disk_usage;
 use crate::scan::{Item, Removal, modified};
 
-/// Deep enough for `<group>/<client>/<project>/<module>`, counted from the folder searched.
-const MAX_DEPTH: usize = 8;
-const SETTINGS_FILES: &[&str] = &["settings.gradle", "settings.gradle.kts"];
-const MODULE_FILES: &[&str] = &["build.gradle", "build.gradle.kts"];
+/// Deep enough for `<group>/<client>/<project>/<module>`, counted from the folder searched, and
+/// the same depth the guard accepts, so nothing is offered that the guard would refuse.
+const MAX_DEPTH: usize = MAX_DEPTH_IN_PROJECT;
 /// Folders that hold other things than projects, or copies of them.
 const NOT_ENTERED: &[&str] = &[
     "node_modules",
@@ -27,9 +29,11 @@ const NOT_ENTERED: &[&str] = &[
     "Carthage",
     "Library",
 ];
-const IOS_APP: &str = "iosApp";
-/// The search stops after this many entries, so a huge tree or a stalled mount cannot hang it.
+/// The search stops after this many entries, so a huge tree cannot hang it.
 const MAX_ENTRIES: usize = 400_000;
+/// The search of one folder stops after this long. Folders on another volume (a network share, an
+/// iCloud mount) are not entered at all, which is what stalls.
+const MAX_SEARCH_TIME: Duration = Duration::from_secs(60);
 /// Problems listed; more are counted.
 const MAX_PROBLEMS: usize = 100;
 /// What Gradle and the Kotlin and Android plugins put at the top of a `build` folder.
@@ -148,15 +152,36 @@ pub fn folders_from(env: &Env, paths: &[String]) -> Result<Vec<PathBuf>, String>
 }
 
 /// The projects under `folders`, which are searched a few levels deep without following symlinks,
-/// skipping hidden folders and build output.
+/// skipping hidden folders, build output, other volumes and the folder `GRADLE_USER_HOME` names.
 #[must_use]
 pub fn find_projects(env: &Env, folders: &[PathBuf]) -> Found {
+    let gradle_home = std::env::var_os("GRADLE_USER_HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.canonicalize().unwrap_or(home));
+    find_projects_with(
+        env,
+        folders,
+        &SystemRunner::default(),
+        gradle_home.as_deref(),
+    )
+}
+
+/// `find_projects` with the program runner (for `git`) and the Gradle home given.
+#[must_use]
+pub fn find_projects_with(
+    env: &Env,
+    folders: &[PathBuf],
+    runner: &dyn CommandRunner,
+    gradle_home: Option<&Path>,
+) -> Found {
     let mut found = Found::default();
     let mut gradle_dirs = BTreeSet::new();
     let mut settings_dirs = BTreeSet::new();
     for folder in folders.iter().filter(|folder| folder.is_dir()) {
         walk(
             folder,
+            gradle_home,
             &mut gradle_dirs,
             &mut settings_dirs,
             &mut found.problems,
@@ -177,7 +202,7 @@ pub fn find_projects(env: &Env, folders: &[PathBuf]) -> Found {
             .push(dir.clone());
     }
     for (root, modules) in by_root {
-        let (project, problems) = project_at(env, &root, &modules);
+        let (project, problems) = project_at(env, &root, &modules, runner, gradle_home);
         found.problems.extend(problems);
         found.projects.extend(project);
     }
@@ -194,27 +219,40 @@ pub fn find_projects(env: &Env, folders: &[PathBuf]) -> Found {
 
 fn walk(
     folder: &Path,
+    gradle_home: Option<&Path>,
     gradle_dirs: &mut BTreeSet<PathBuf>,
     settings_dirs: &mut BTreeSet<PathBuf>,
     problems: &mut Vec<String>,
 ) {
+    let device = fs::metadata(folder).map(|meta| meta.dev()).ok();
+    let skipped_home = gradle_home.map(Path::to_path_buf);
+    let deadline = Instant::now() + MAX_SEARCH_TIME;
     let walk = WalkDir::new(folder)
         .max_depth(MAX_DEPTH)
         .skip_hidden(true)
         .follow_links(false)
         .sort(true)
-        .process_read_dir(|_, _, (), children| {
+        .process_read_dir(move |_, _, (), children| {
             children.retain(|child| {
                 child.as_ref().map_or(true, |entry| {
                     !(entry.file_type.is_dir()
-                        && entry
+                        && (entry
                             .file_name
                             .to_str()
-                            .is_some_and(|name| NOT_ENTERED.contains(&name)))
+                            .is_some_and(|name| NOT_ENTERED.contains(&name))
+                            || skipped_home.as_deref() == Some(entry.path().as_path())
+                            || on_another_volume(entry, device)))
                 })
             });
         });
     for (seen, entry) in walk.into_iter().enumerate() {
+        if Instant::now() >= deadline {
+            problems.push(format!(
+                "{} was searched only in part: it took too long",
+                folder.display()
+            ));
+            break;
+        }
         if seen >= MAX_ENTRIES {
             problems.push(format!(
                 "{} was searched only in part: it has too many entries",
@@ -254,9 +292,22 @@ fn walk(
     }
 }
 
+/// True when the folder is on another volume than the folder searched (a mount point). Unreadable
+/// counts as another volume: it is not entered.
+fn on_another_volume(entry: &jwalk::DirEntry<((), ())>, device: Option<u64>) -> bool {
+    let Some(device) = device else { return false };
+    entry.metadata().map_or(true, |meta| meta.dev() != device)
+}
+
 /// The project whose folder is `root` and whose Gradle folders are `modules`, with its removable
 /// folders; `None` when it has none.
-fn project_at(env: &Env, root: &Path, modules: &[PathBuf]) -> (Option<Project>, Vec<String>) {
+fn project_at(
+    env: &Env,
+    root: &Path,
+    modules: &[PathBuf],
+    runner: &dyn CommandRunner,
+    gradle_home: Option<&Path>,
+) -> (Option<Project>, Vec<String>) {
     // The guard names paths as they are on disk; the project folder must be named the same way.
     let root = &root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut candidates: Vec<(PathBuf, &'static str)> = modules
@@ -267,10 +318,18 @@ fn project_at(env: &Env, root: &Path, modules: &[PathBuf]) -> (Option<Project>, 
     candidates.push((root.join(".kotlin"), "purge.kotlin"));
     candidates.push((root.join(IOS_APP).join("build"), "purge.ios-build"));
     candidates.push((root.join(IOS_APP).join("Pods"), "purge.pods"));
+    let tracked = tracked_builds(runner, root, &candidates);
     let mut items = Vec::new();
     let mut problems = Vec::new();
     let mut seen = BTreeSet::new();
     for (path, target) in candidates {
+        if gradle_home.is_some_and(|home| path.starts_with(home) || home.starts_with(&path)) {
+            problems.push(format!(
+                "{} is not offered: it is, or holds, the folder GRADLE_USER_HOME names",
+                path.display()
+            ));
+            continue;
+        }
         // `iosApp` can be a module too: its `build` is one folder, offered once.
         if !seen.insert(path.clone()) {
             continue;
@@ -281,7 +340,9 @@ fn project_at(env: &Env, root: &Path, modules: &[PathBuf]) -> (Option<Project>, 
         }
         match guard::check_project(&path, root, env) {
             Ok(safe) => {
-                let target = if target == "purge.build" && !looks_generated(&safe, root) {
+                let target = if target == "purge.build"
+                    && (tracked.contains(&path) || !looks_generated(&safe, root))
+                {
                     "purge.build-unsure"
                 } else {
                     target
@@ -305,6 +366,46 @@ fn project_at(env: &Env, root: &Path, modules: &[PathBuf]) -> (Option<Project>, 
         items,
     };
     (Some(project), problems)
+}
+
+/// The `build` folders among `candidates` that hold files git tracks: someone committed them, so
+/// they are not only output. Empty when the project is not in a git repository or git cannot say.
+fn tracked_builds(
+    runner: &dyn CommandRunner,
+    root: &Path,
+    candidates: &[(PathBuf, &'static str)],
+) -> BTreeSet<PathBuf> {
+    let builds: Vec<(&Path, &str)> = candidates
+        .iter()
+        .filter(|(_, target)| *target == "purge.build")
+        .filter(|(path, _)| fs::symlink_metadata(path).is_ok())
+        .filter_map(|(path, _)| {
+            let relative = path.strip_prefix(root).ok()?.to_str()?;
+            Some((path.as_path(), relative))
+        })
+        .collect();
+    let in_repository = root.ancestors().any(|folder| folder.join(".git").exists());
+    let (Some(root_text), true, false) = (root.to_str(), in_repository, builds.is_empty()) else {
+        return BTreeSet::new();
+    };
+    let mut args = vec!["-C", root_text, "ls-files", "-z", "--"];
+    args.extend(builds.iter().map(|(_, relative)| *relative));
+    let Ok(listing) = runner.run("git", &args) else {
+        return BTreeSet::new();
+    };
+    let tracked: Vec<&Path> = listing
+        .split('\0')
+        .filter(|name| !name.is_empty())
+        .map(Path::new)
+        .collect();
+    builds
+        .iter()
+        .filter(|(path, _)| {
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            tracked.iter().any(|file| file.starts_with(relative))
+        })
+        .map(|(path, _)| path.to_path_buf())
+        .collect()
 }
 
 /// True when a `build` folder holds only what Gradle makes, or git ignores it: then nothing in it
@@ -387,7 +488,12 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use super::*;
-    use crate::testing::Fixture;
+    use crate::testing::{FakeRunner, Fixture};
+
+    /// The search with no `git` and no `GRADLE_USER_HOME`, so tests do not depend on the machine.
+    fn find_projects(env: &Env, folders: &[PathBuf]) -> Found {
+        find_projects_with(env, folders, &FakeRunner::failing("no git"), None)
+    }
 
     fn kmp(fx: &Fixture, rel: &str) {
         fx.file(&format!("{rel}/settings.gradle.kts"));
@@ -632,5 +738,122 @@ mod tests {
         assert!(ok(&outside).unwrap_err().contains("inside your home"));
         assert!(ok(&fx.home().display().to_string()).is_err());
         assert!(ok("~/Code/../..").is_err());
+    }
+
+    #[test]
+    fn a_build_folder_with_tracked_files_is_offered_with_more_care() {
+        let fx = Fixture::new();
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/.git");
+        fx.dir("Documents/App/build/classes");
+        let git = FakeRunner::answering("build/classes/Keep.class\0");
+
+        let found = find_projects_with(&fx.env, &default_folders(&fx.env), &git, None);
+
+        assert_eq!(target_of(&found, "build"), "purge.build-unsure");
+        let calls = git.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "one git call per project");
+        assert_eq!(calls[0][0], "git");
+        assert!(calls[0].ends_with(&["--".to_string(), "build".to_string()]));
+    }
+
+    #[test]
+    fn a_build_folder_git_tracks_nothing_in_stays_ordinary() {
+        let fx = Fixture::new();
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/.git");
+        fx.dir("Documents/App/build/classes");
+        let git = FakeRunner::answering("src/Main.kt\0");
+
+        let found = find_projects_with(&fx.env, &default_folders(&fx.env), &git, None);
+
+        assert_eq!(target_of(&found, "build"), "purge.build");
+    }
+
+    #[test]
+    fn without_a_git_repository_git_is_not_asked() {
+        let fx = Fixture::new();
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/build/classes");
+        let git = FakeRunner::answering("build/classes/Keep.class\0");
+
+        let found = find_projects_with(&fx.env, &default_folders(&fx.env), &git, None);
+
+        assert_eq!(target_of(&found, "build"), "purge.build");
+        assert!(git.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn when_git_fails_the_other_checks_decide() {
+        let fx = Fixture::new();
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/.git");
+        fx.dir("Documents/App/build/classes");
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &FakeRunner::failing("git is not installed"),
+            None,
+        );
+
+        assert_eq!(target_of(&found, "build"), "purge.build");
+    }
+
+    #[test]
+    fn the_gradle_home_is_not_searched() {
+        let fx = Fixture::new();
+        fx.file("Documents/gradle-home/caches/sample/settings.gradle.kts");
+        fx.dir("Documents/gradle-home/caches/sample/build/classes");
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/build/classes");
+        let gradle_home = fx
+            .home()
+            .join("Documents/gradle-home")
+            .canonicalize()
+            .unwrap();
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &FakeRunner::failing("no git"),
+            Some(&gradle_home),
+        );
+
+        let names: Vec<_> = found.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["App"]);
+    }
+
+    #[test]
+    fn a_project_dot_gradle_that_is_the_gradle_home_is_not_offered() {
+        let fx = Fixture::new();
+        fx.file("Documents/App/settings.gradle.kts");
+        fx.dir("Documents/App/.gradle/caches");
+        fx.dir("Documents/App/build/classes");
+        let gradle_home = fx
+            .home()
+            .join("Documents/App/.gradle")
+            .canonicalize()
+            .unwrap();
+
+        let found = find_projects_with(
+            &fx.env,
+            &default_folders(&fx.env),
+            &FakeRunner::failing("no git"),
+            Some(&gradle_home),
+        );
+
+        let [project] = &found.projects[..] else {
+            panic!("{found:?}")
+        };
+        assert_eq!(names(project), ["build"]);
+        assert!(
+            found
+                .problems
+                .iter()
+                .any(|p| p.contains("GRADLE_USER_HOME")),
+            "{:?}",
+            found.problems
+        );
     }
 }

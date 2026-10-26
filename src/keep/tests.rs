@@ -749,3 +749,12 @@ fn adding_the_same_entry_twice_keeps_one() {
     assert_eq!(keep.packages().count(), 1);
     assert_eq!(keep.paths().count(), 1);
 }
+
+#[test]
+fn a_purge_target_cannot_be_kept_by_id() {
+    let fx = Fixture::new();
+
+    let refused = KeepList::empty(&fx.env).with_target("purge.build");
+
+    assert!(refused.unwrap_err().contains("keep the project folder"));
+}

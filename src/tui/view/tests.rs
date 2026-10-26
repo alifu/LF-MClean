@@ -23,7 +23,26 @@ fn screen_of_height(app: &App, height: u16) -> String {
     let app = app.clone().with_body_rows(usize::from(height - 4));
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
-    terminal.backend().to_string()
+    mask_version(&terminal.backend().to_string())
+}
+
+/// The header shows the program version; snapshots hold a fixed one, so a release does not break
+/// them. The line keeps its width.
+fn mask_version(screen: &str) -> String {
+    const MASK: &str = "vX.Y.Z";
+    let shown = format!("v{}", env!("CARGO_PKG_VERSION"));
+    screen
+        .lines()
+        .map(|line| match line.strip_suffix('"') {
+            Some(inner) if inner.contains(&shown) => {
+                let width = inner.chars().count();
+                let masked = inner.replacen(&shown, MASK, 1);
+                format!("{masked:<width$}\"")
+            }
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
@@ -235,4 +254,54 @@ fn purge_lists_projects_with_one_opened() {
     );
 
     insta::assert_snapshot!(screen(&app));
+}
+
+#[test]
+fn history_marks_a_removal_that_never_finished() {
+    let fx = Fixture::new();
+    let (app, _) = app(&fx, Mode::Trash).start_at(crate::tui::Screen::History);
+    let contents = LogContents {
+        entries: vec![LogEntry::started(
+            now(),
+            std::path::Path::new("/Users/me/.gradle/caches/jars-9"),
+            Mode::Trash,
+            5 * MB,
+        )],
+        damaged_lines: vec![],
+    };
+
+    let (app, _) = app.on_event(Event::History(Ok(contents)));
+
+    assert!(screen(&app).contains("✗ interrupted"));
+}
+
+#[test]
+fn a_window_that_is_too_small_asks_for_a_larger_one() {
+    let fx = Fixture::new();
+    let start = app(&fx, Mode::Trash);
+    let mut narrow = Terminal::new(TestBackend::new(40, 20)).unwrap();
+    let mut short = Terminal::new(TestBackend::new(100, 8)).unwrap();
+
+    narrow.draw(|frame| draw(frame, &start)).unwrap();
+    short.draw(|frame| draw(frame, &start)).unwrap();
+
+    assert!(
+        narrow
+            .backend()
+            .to_string()
+            .contains("Make the window larger")
+    );
+    assert!(short.backend().to_string().contains("100x8 now"));
+}
+
+#[test]
+fn the_smallest_usable_window_still_draws_the_screens() {
+    let fx = Fixture::new();
+    let mut smallest = Terminal::new(TestBackend::new(60, 12)).unwrap();
+
+    smallest
+        .draw(|frame| draw(frame, &app(&fx, Mode::Trash)))
+        .unwrap();
+
+    assert!(smallest.backend().to_string().contains("LF-MClean"));
 }

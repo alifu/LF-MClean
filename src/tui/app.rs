@@ -1,6 +1,7 @@
 //! The state of the interactive screens and how keys and background events change it. Nothing
 //! here draws or touches the disk: a change returns a new `App` and the effects to carry out.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, FixedOffset};
@@ -202,6 +203,8 @@ pub struct App {
     pub purge: PurgeState,
     /// Tools running now.
     pub running: Vec<Tool>,
+    /// Why running tools could not be checked, so the review can say it did not know.
+    pub tools_unchecked: Option<String>,
     /// Free space when the program started.
     pub free_space: Option<u64>,
     /// The removal log.
@@ -220,6 +223,8 @@ pub struct App {
     pub now: DateTime<FixedOffset>,
     /// An empty keep list for this home, used to draw lists while the real one is broken.
     pub(super) blank_keep: KeepList,
+    /// Where a crash of background work is written.
+    pub(super) crash_log: PathBuf,
 }
 
 impl App {
@@ -234,6 +239,7 @@ impl App {
     ) -> Self {
         Self {
             blank_keep: KeepList::empty(env),
+            crash_log: env.crash_log(),
             mode,
             screen: Screen::Menu,
             menu_cursor: 0,
@@ -247,6 +253,7 @@ impl App {
             package_list: ListState::default(),
             purge: PurgeState::new(env),
             running: Vec::new(),
+            tools_unchecked: None,
             free_space,
             history: Loading::Idle,
             history_scroll: 0,
@@ -359,7 +366,10 @@ impl App {
                 app.purge.found = Loading::Done(Arc::new(found));
             }
             Event::Crashed(what) => {
-                app.message = Some(format!("{what} stopped because of a bug."));
+                app.message = Some(format!(
+                    "{what} stopped because of a bug. Details: {}",
+                    app.crash_log.display()
+                ));
                 if app.screen == Screen::Cleaning {
                     app.screen = Screen::Summary;
                 }
@@ -376,6 +386,7 @@ impl App {
             Event::Tools(Ok(tools)) => app.running = tools,
             Event::Tools(Err(reason)) => {
                 app.message = Some(format!("Running apps could not be checked: {reason}"));
+                app.tools_unchecked = Some(reason);
             }
             Event::KeepSaved(Ok(())) => {}
             Event::KeepSaved(Err(reason)) => {

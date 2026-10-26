@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::app::{App, Loading, MENU, Screen};
 use crate::catalog::Safety;
@@ -16,6 +16,9 @@ use crate::mode::Mode;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ACCENT: Color = Color::Cyan;
+/// Smaller than this and the layout clips, so a request to enlarge the window is drawn instead.
+const MIN_COLUMNS: u16 = 60;
+const MIN_ROWS: u16 = 12;
 
 /// The first of `visible` rows to show so that `cursor` is on screen, at the bottom once the list
 /// scrolls.
@@ -25,6 +28,15 @@ fn first_visible(cursor: usize, visible: usize) -> usize {
 
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    if area.width < MIN_COLUMNS || area.height < MIN_ROWS {
+        let ask = format!(
+            "Make the window larger: {MIN_COLUMNS}x{MIN_ROWS} needed, {}x{} now.",
+            area.width, area.height
+        );
+        frame.render_widget(Paragraph::new(ask).wrap(Wrap { trim: true }), area);
+        return;
+    }
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(1),
@@ -89,10 +101,10 @@ fn footer_lines(app: &App) -> Vec<Line<'static>> {
     let keys = match app.screen {
         Screen::Menu => "↑↓ / 1-6 choose   enter open   q quit",
         Screen::Clean | Screen::Purge => {
-            "↑↓ move  space tick  →← open/close  k keep  a all safe  n none  enter review  esc menu"
+            "↑↓ move  space tick  →← open/close  k keep  a all safe  n none  r refresh  enter review  esc menu"
         }
         Screen::Packages => {
-            "↑↓ move  space tick  →← open/close  k keep  o old versions  u unused  enter review  esc menu"
+            "↑↓ move  space tick  →← open/close  k keep  o old  u unused  r refresh  enter review  esc menu"
         }
         Screen::Keep => "↑↓ move   space mark to stop keeping   enter save   esc back",
         Screen::History | Screen::Review => "↑↓ scroll   esc back",

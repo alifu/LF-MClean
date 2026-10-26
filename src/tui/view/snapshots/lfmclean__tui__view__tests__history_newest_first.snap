@@ -2,7 +2,7 @@
 source: src/tui/view/tests.rs
 expression: screen(&app)
 ---
-" LF-MClean  v0.1.0   Moves to the Trash                                                             "
+" LF-MClean  vX.Y.Z   Moves to the Trash                                                             "
 " Apple Silicon | Free space: 41.2 GB | Dev caches found: not scanned yet                            "
 " 2026-10-26 12:00  permanent   900.0 MB  /Users/me/.konan/dependencies  ✗ permission denied         "
 " 2026-10-26 12:00  trash         5.0 MB  /Users/me/.gradle/caches/jars-9                            "

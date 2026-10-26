@@ -38,6 +38,7 @@ impl App {
             }
             Key::Char('u') if self.screen == Screen::Packages => self.tick_unused(),
             Key::Char('k') => self.toggle_keep(),
+            Key::Char('r') => self.refresh(),
             Key::Enter => self.open_review(),
             Key::Esc | Key::Char('q') => (
                 Self {
@@ -48,6 +49,45 @@ impl App {
             ),
             _ => (self, Vec::new()),
         }
+    }
+
+    /// Scans the shown screen again, dropping its ticks. Not while it is still scanning.
+    pub(super) fn refresh(self) -> (Self, Vec<Effect>) {
+        let running = match self.screen {
+            Screen::Packages => matches!(self.packages, Loading::Running(_)),
+            Screen::Purge => matches!(self.purge.found, Loading::Running(_)),
+            _ => matches!(self.scan, Loading::Running(_)),
+        };
+        if running {
+            return self.noted("Still scanning.");
+        }
+        let screen = self.screen;
+        let app = match screen {
+            Screen::Packages => Self {
+                packages: Loading::Idle,
+                packages_generation: self.packages_generation + 1,
+                package_list: ListState::default(),
+                ..self
+            },
+            Screen::Purge => Self {
+                purge: self.purge.reset(),
+                ..self
+            },
+            _ => Self {
+                scan: Loading::Idle,
+                scan_generation: self.scan_generation + 1,
+                clean_list: ListState::default(),
+                ..self
+            },
+        };
+        let (app, effects) = app.start_at(screen);
+        (
+            Self {
+                message: Some("Scanning again…".to_string()),
+                ..app
+            },
+            effects,
+        )
     }
 
     pub(super) fn tick_unused(self) -> (Self, Vec<Effect>) {
@@ -132,6 +172,12 @@ impl App {
             return self.noted("Nothing is ticked. Space ticks the line under the cursor.");
         }
         let review = Review::new(picked, self.screen, &self.running, self.body_rows);
+        let review = match &self.tools_unchecked {
+            Some(reason) => review.with_warning(format!(
+                "Running apps could not be checked ({reason}); make sure Xcode, Android Studio and Gradle are closed."
+            )),
+            None => review,
+        };
         (
             Self {
                 review: Some(review),

@@ -2,6 +2,7 @@
 //! slow work (scans, removal) on background threads that report back with events.
 
 pub mod app;
+mod event_loop;
 pub mod keep_screen;
 mod keys;
 pub mod list;
@@ -16,22 +17,19 @@ mod testkit;
 mod tests;
 
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Local;
-use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{
-    self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
 
 pub use app::Screen;
-use app::{App, Effect, Event, Key};
+use app::{App, Effect, Event};
+use event_loop::{TerminalKeys, event_loop};
 
 use crate::clean::Cleaner;
 use crate::command::SystemRunner;
+use crate::crashlog;
 use crate::env::Env;
 use crate::keep::KeepList;
 use crate::mode::Mode;
@@ -39,11 +37,6 @@ use crate::oplog::OpLog;
 use crate::packages::{browse, find_usage};
 use crate::scan::Scanner;
 use crate::system::{free_space, running_tools};
-
-/// How long to wait for a key before looking for background events.
-const TICK: Duration = Duration::from_millis(100);
-/// Lines of the screen that are not body: the header and the footer.
-const FRAME_LINES: u16 = 4;
 
 /// Runs the screens until the person quits.
 ///
@@ -75,87 +68,39 @@ pub fn run(
     for effect in first {
         perform(effect, env, mode, &sender);
     }
-    restore_only_for_main_thread_panics();
-    let result = event_loop(&mut terminal, app, env, &sender, &receiver);
+    restore_only_for_main_thread_panics(env);
+    let result = event_loop(
+        &mut terminal,
+        app,
+        env,
+        &sender,
+        &receiver,
+        &mut TerminalKeys,
+    );
     ratatui::restore();
     result
 }
 
 /// `ratatui` restores the terminal on any panic. A background thread's panic is caught and shown
 /// as an event while the screens keep running, so only a panic of the screens themselves may
-/// restore the terminal and print.
-fn restore_only_for_main_thread_panics() {
+/// restore the terminal and print. A background panic is written to the crash log instead.
+fn restore_only_for_main_thread_panics(env: &Env) {
     let restore_and_report = panic::take_hook();
+    let env = env.clone();
     panic::set_hook(Box::new(move |info| {
-        if thread::current().name() == Some("main") {
-            restore_and_report(info);
-        }
-    }));
-}
-
-fn event_loop(
-    terminal: &mut DefaultTerminal,
-    mut app: App,
-    env: &Env,
-    sender: &Sender<Event>,
-    receiver: &Receiver<Event>,
-) -> Result<()> {
-    loop {
-        let rows = terminal.size()?.height.saturating_sub(FRAME_LINES);
-        app = app.with_body_rows(usize::from(rows));
-        terminal.draw(|frame| view::draw(frame, &app))?;
-        let mut effects = Vec::new();
-        if event::poll(TICK)?
-            && let TermEvent::Key(press) = event::read()?
-            && press.kind == KeyEventKind::Press
-            && let Some(key) = key_of(press)
-        {
-            let (next, more) = app.on_key(key);
-            app = next;
-            effects.extend(more);
-        }
-        while let Ok(event) = receiver.try_recv() {
-            let (next, more) = app.on_event(event);
-            app = next;
-            effects.extend(more);
-        }
-        for effect in effects {
-            match effect {
-                Effect::Quit => return Ok(()),
-                // Saved here, in order: two quick changes cannot land on disk the wrong way
-                // round, and quitting right after cannot lose one.
-                Effect::SaveKeep(keep) => {
-                    let saved = keep.save(env).map_err(|e| e.to_string());
-                    app = app.on_event(Event::KeepSaved(saved)).0;
-                }
-                other => perform(other, env, app.mode, sender),
+        let thread = thread::current();
+        match thread.name() {
+            Some("main") => restore_and_report(info),
+            name => {
+                // There is nowhere left to report a failure to write the log.
+                drop(crashlog::record(
+                    &env,
+                    name.unwrap_or("background"),
+                    &info.to_string(),
+                ));
             }
         }
-    }
-}
-
-/// Plain keys only: Ctrl-C leaves, and other Ctrl or Alt chords are ignored, so Ctrl-Y cannot
-/// confirm a removal.
-fn key_of(press: KeyEvent) -> Option<Key> {
-    let chord = press
-        .modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-    if chord {
-        return (press.modifiers.contains(KeyModifiers::CONTROL)
-            && press.code == KeyCode::Char('c'))
-        .then_some(Key::Interrupt);
-    }
-    Some(match press.code {
-        KeyCode::Up => Key::Up,
-        KeyCode::Down => Key::Down,
-        KeyCode::Left => Key::Left,
-        KeyCode::Right => Key::Right,
-        KeyCode::Enter => Key::Enter,
-        KeyCode::Esc => Key::Esc,
-        KeyCode::Backspace => Key::Backspace,
-        KeyCode::Char(c) => Key::Char(c),
-        _ => return None,
-    })
+    }));
 }
 
 /// Starts an effect on its own thread; its result comes back over `sender`. A panic there is
