@@ -1,14 +1,14 @@
 # LF-MClean
 
-An interactive terminal cleaner for the caches of mobile developers on macOS: Xcode, Android, Gradle, Kotlin/Native,
-CocoaPods and Swift Package Manager.
+An interactive terminal cleaner for the caches of mobile developers on macOS: Xcode, Instruments, Android, Gradle,
+Kotlin/Native, CocoaPods and Swift Package Manager.
 
 ## Safety model
 
 - Everything is moved to the **Trash** unless you pass `--permanent`. Simulators are the exception: `simctl`
   deletes them for good, and the review says so.
-- Only a fixed list of cache folders inside your home folder is ever offered; every path is checked again
-  just before it is removed.
+- Only a fixed list of cache folders inside your home folder (and Instruments' folders in your private
+  `/private/var/folders` folder) is ever offered; every path is checked again just before it is removed.
 - You review what is ticked before anything happens. Risky items (emulators, system images, archives)
   need you to type `delete`.
 - The [keep list](#keeping-things) is checked last and wins over everything.
@@ -21,7 +21,8 @@ CocoaPods and Swift Package Manager.
 lfmclean                  # the menu: Clean, Packages, Purge, Keep list, History
 lfmclean clean|packages|purge|keep|history   # open a screen directly
 lfmclean clean --ids xcode.derived-data,gradle.caches --yes   # no screens, for scripts
-lfmclean purge --paths ~/Code --json          # project build folders found, nothing removed
+lfmclean clean --ids xcode.instruments-cache --dry-run        # Instruments caches and leftovers
+lfmclean purge --paths ~/Code --json          # project build folders and .trace recordings found, nothing removed
 lfmclean --dry-run        # on any command: show what would be removed, remove nothing
 lfmclean --permanent      # remove for good instead of moving to the Trash
 lfmclean scan             # caches found and their sizes, grouped like Xcode / Android / Gradle & Kotlin
@@ -32,11 +33,12 @@ lfmclean scan --json      # everything as JSON, with the paths of each item
 `scan` only reads. A size ending in `+` is a lower bound: some folders could not be read. Sizes are
 the disk space taken (like Finder), in powers of 1000.
 
-What it looks at (all inside your home folder, nothing else is ever offered):
+What it looks at (inside your home folder, plus Instruments' folders in your private `/private/var/folders`
+folder; nothing else is ever offered):
 
 | Group | Caches |
 |---|---|
-| Xcode | DerivedData, device support files, SwiftUI preview data, simulator caches, unavailable simulators, archives, Swift package clones and manifests, CocoaPods cache and spec repos |
+| Xcode | DerivedData, device support files, SwiftUI preview data, simulator caches, unavailable simulators, archives, Instruments caches and leftovers, Swift package clones and manifests, CocoaPods cache and spec repos |
 | Android | Android Studio and JetBrains caches and logs, emulators, emulator system images |
 | Gradle & Kotlin | Gradle caches, daemon logs and distributions, Kotlin/Native toolchains and dependencies |
 
@@ -84,6 +86,14 @@ the details are written to `~/Library/Logs/lfmclean/crash.log`. Please include i
   `GRADLE_USER_HOME` names, and stops searching a folder after a minute. A `build` folder with files that git tracks, or with content Gradle does not
   generate, is offered as **caution**, not as safe. Git is asked with the repository's own hooks and
   `fsmonitor` turned off, so a downloaded project cannot run anything.
+- `purge` also offers Instruments recordings (`.trace` bundles, such as the `Launch_*.trace` that
+  `xctrace record` writes), as **caution**: a recording cannot be made again. A recording is offered
+  in the folder it is in, never one placed straight into `~/Documents`, `~/Desktop` or `~/Downloads`.
+- Instruments caches are looked for in `~/Library/Caches` and in your private cache folder
+  (`getconf DARWIN_USER_CACHE_DIR`, `/private/var/folders/…/C`): only the `com.apple.dt.Instruments`
+  and `com.apple.dt.InstrumentsCLI` folders there. From the private temporary folder
+  (`/private/var/folders/…/T`), which holds every app's files, only plain files named
+  `instruments*.ktrace` directly in it are removed. Running Instruments or `xctrace` is warned about.
 - The terminal must be at least 60 columns by 12 rows; a smaller window shows a request to enlarge it.
 
 ## Install

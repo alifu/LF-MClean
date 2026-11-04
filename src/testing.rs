@@ -24,11 +24,18 @@ impl Fixture {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let outside = tmp.path().join("outside");
+        let user_cache = tmp.path().join("private-cache");
+        let user_temp = tmp.path().join("private-temp");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(&user_cache).unwrap();
+        fs::create_dir_all(&user_temp).unwrap();
         fs::write(outside.join(PRECIOUS_FILE), "keep me").unwrap();
         Self {
-            env: Env::new(&home, current_uid()).unwrap(),
+            env: Env::new(&home, current_uid())
+                .unwrap()
+                .with_user_cache_unchecked(&user_cache)
+                .with_user_temp_unchecked(&user_temp),
             outside,
             _tmp: tmp,
         }
@@ -41,6 +48,16 @@ impl Fixture {
 
     pub fn home(&self) -> &Path {
         self.env.home()
+    }
+
+    /// The private cache folder the fixture's `env` uses, resolved.
+    pub fn user_cache(&self) -> &Path {
+        self.env.user_cache().unwrap()
+    }
+
+    /// The private temporary folder the fixture's `env` uses, resolved.
+    pub fn user_temp(&self) -> &Path {
+        self.env.user_temp().unwrap()
     }
 
     /// Creates `rel` (a folder with one file) under home and returns its path.

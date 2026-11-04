@@ -40,10 +40,13 @@ pub struct Discovery {
     pub skipped: Vec<Skip>,
 }
 
-/// Lists the entries of `source`. A folder that does not exist is simply empty.
+/// Lists the entries of `source`. A folder that does not exist is simply empty, and so is a
+/// source of the private cache folder when that folder is unknown.
 #[must_use]
 pub fn discover(env: &Env, source: &Source) -> Discovery {
-    let root = env.home().join(source.root);
+    let Some(root) = env.source_root(source) else {
+        return Discovery::default();
+    };
     let base = root.join(source.sub);
     let mut found = Discovery::default();
     list(&base, &base, &root, source, source.depth, &mut found);

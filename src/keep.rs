@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::catalog::{self, Source, Target};
+use crate::catalog::{self, Base, Source, Target};
 use crate::env::Env;
 use crate::packages::{self, Manager, PackageId};
 use crate::scan::Item;
@@ -175,6 +175,9 @@ struct KeepFile {
 pub struct KeepList {
     /// The home folder, resolved, so target folders match the paths the guard hands out.
     home: PathBuf,
+    /// The private cache and temporary folders, resolved, for the sources inside them.
+    user_cache: Option<PathBuf>,
+    user_temp: Option<PathBuf>,
     targets: BTreeSet<&'static str>,
     packages: BTreeSet<KeptPackage>,
     paths: BTreeSet<PathBuf>,
@@ -186,6 +189,8 @@ impl KeepList {
     pub fn empty(env: &Env) -> Self {
         Self {
             home: resolved(env.home()),
+            user_cache: env.user_cache().map(Path::to_path_buf),
+            user_temp: env.user_temp().map(Path::to_path_buf),
             targets: BTreeSet::new(),
             packages: BTreeSet::new(),
             paths: BTreeSet::new(),
@@ -341,7 +346,16 @@ impl KeepList {
     }
 
     fn source_overlaps(&self, source: &Source, path: &Path) -> bool {
-        let base = folded(&self.home.join(source.root).join(source.sub));
+        let base_dir = match source.base {
+            Base::Home => Some(&self.home),
+            Base::UserCache => self.user_cache.as_ref(),
+            Base::UserTemp => self.user_temp.as_ref(),
+        };
+        let Some(base_dir) = base_dir else {
+            return false;
+        };
+        let root = base_dir.join(source.root);
+        let base = folded(&root.join(source.sub));
         let folded_path = folded(path);
         if base.starts_with(&folded_path) {
             return true;
@@ -443,6 +457,9 @@ fn matches_folded(source: &Source, name: &str) -> bool {
         catalog::Filter::Named(names) => names.iter().any(|n| fold_text(n) == name),
         catalog::Filter::Prefix(prefix) => name.starts_with(&fold_text(prefix)),
         catalog::Filter::Suffix(suffix) => name.ends_with(&fold_text(suffix)),
+        catalog::Filter::PrefixAndSuffix(prefix, suffix) => {
+            name.starts_with(&fold_text(prefix)) && name.ends_with(&fold_text(suffix))
+        }
         catalog::Filter::Any | catalog::Filter::DirsOnly => true,
     }
 }

@@ -79,6 +79,8 @@ pub enum Filter {
     Suffix(&'static str),
     /// Exactly these names.
     Named(&'static [&'static str]),
+    /// Names starting with the first text and ending with the second.
+    PrefixAndSuffix(&'static str, &'static str),
 }
 
 impl Filter {
@@ -89,14 +91,32 @@ impl Filter {
             Self::Prefix(prefix) => name.starts_with(prefix),
             Self::Suffix(suffix) => name.ends_with(suffix),
             Self::Named(names) => names.contains(&name),
+            Self::PrefixAndSuffix(prefix, suffix) => {
+                name.len() > prefix.len() + suffix.len()
+                    && name.starts_with(prefix)
+                    && name.ends_with(suffix)
+            }
         }
     }
+}
+
+/// The folder a source's `root` is relative to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Base {
+    /// The home folder.
+    Home,
+    /// The user's private cache folder, `/private/var/folders/…/C` (`DARWIN_USER_CACHE_DIR`).
+    UserCache,
+    /// The user's private temporary folder, `/private/var/folders/…/T` (`DARWIN_USER_TEMP_DIR`).
+    UserTemp,
 }
 
 /// Where a target's items are: the entries `depth` levels below `root/sub`.
 #[derive(Debug, Clone, Copy)]
 pub struct Source {
-    /// A cache folder `guard` allows, relative to home. Items are removed inside it.
+    /// The folder `root` is relative to.
+    pub base: Base,
+    /// A cache folder `guard` allows, relative to `base`. Items are removed inside it.
     pub root: &'static str,
     /// A folder inside `root` to look in, or empty to look in `root` itself.
     pub sub: &'static str,
@@ -122,9 +142,34 @@ impl Source {
         filter: Filter,
     ) -> Self {
         Self {
+            base: Base::Home,
             root,
             sub,
             depth,
+            filter,
+        }
+    }
+
+    /// The entries directly inside the user's private temporary folder itself.
+    #[must_use]
+    pub const fn user_temp(filter: Filter) -> Self {
+        Self {
+            base: Base::UserTemp,
+            root: "",
+            sub: "",
+            depth: 1,
+            filter,
+        }
+    }
+
+    /// The entries directly inside `root`, a folder of the user's private cache folder.
+    #[must_use]
+    pub const fn user_cache(root: &'static str, filter: Filter) -> Self {
+        Self {
+            base: Base::UserCache,
+            root,
+            sub: "",
+            depth: 1,
             filter,
         }
     }
