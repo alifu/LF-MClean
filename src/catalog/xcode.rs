@@ -6,6 +6,14 @@ const DERIVED_DATA: &str = "Library/Developer/Xcode/DerivedData";
 const ARCHIVES: &str = "Library/Developer/Xcode/Archives";
 const SWIFTPM: &str = "Library/Caches/org.swift.swiftpm";
 const COCOAPODS: &str = "Library/Caches/CocoaPods";
+/// Instruments' caches by folder name: the app's, then `xctrace`'s. Each is looked for both in
+/// `~/Library/Caches` and in the private cache folder (`/private/var/folders/…/C`).
+const INSTRUMENTS_CACHES: [&str; 2] = ["com.apple.dt.Instruments", "com.apple.dt.InstrumentsCLI"];
+/// What a recording leaves in the private temporary folder when Instruments does not tidy up.
+pub(crate) const INSTRUMENTS_TEMP_PREFIX: &str = "instruments";
+pub(crate) const INSTRUMENTS_TEMP_SUFFIX: &str = ".ktrace";
+const LIBRARY_INSTRUMENTS: &str = "Library/Caches/com.apple.dt.Instruments";
+const LIBRARY_INSTRUMENTS_CLI: &str = "Library/Caches/com.apple.dt.InstrumentsCLI";
 
 pub(super) const TARGETS: &[Target] = &[
     Target {
@@ -89,6 +97,25 @@ pub(super) const TARGETS: &[Target] = &[
             2,
             Filter::Suffix(".xcarchive"),
         )],
+    },
+    Target {
+        id: "xcode.instruments-cache",
+        name: "Instruments caches and leftovers",
+        category: Category::Xcode,
+        safety: Safety::Safe,
+        effect: "Instruments makes its caches again on the next recording; leftover temporary \
+                 recording files are not used again.",
+        kind: Kind::Paths,
+        sources: &[
+            Source::children(LIBRARY_INSTRUMENTS, Filter::Any),
+            Source::children(LIBRARY_INSTRUMENTS_CLI, Filter::Any),
+            Source::user_cache(INSTRUMENTS_CACHES[0], Filter::Any),
+            Source::user_cache(INSTRUMENTS_CACHES[1], Filter::Any),
+            Source::user_temp(Filter::PrefixAndSuffix(
+                INSTRUMENTS_TEMP_PREFIX,
+                INSTRUMENTS_TEMP_SUFFIX,
+            )),
+        ],
     },
     Target {
         id: "spm.repositories",

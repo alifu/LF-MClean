@@ -6,15 +6,22 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use lfmclean::env::{USER_CACHE_OVERRIDE, USER_TEMP_OVERRIDE};
 use tempfile::TempDir;
 
 const NO_SIMULATORS: &str = r#"{"devices": {}}"#;
 const EXECUTABLE: u32 = 0o755;
+const PRIVATE_CACHE: &str = "private-cache";
+const PRIVATE_TEMP: &str = "private-temp";
 
 struct Sandbox {
     _tmp: TempDir,
     home: PathBuf,
     bin: PathBuf,
+    /// The private cache folder the program sees, inside the sandbox.
+    private_cache: PathBuf,
+    /// The private temporary folder the program sees, inside the sandbox.
+    private_temp: PathBuf,
 }
 
 impl Sandbox {
@@ -23,6 +30,10 @@ impl Sandbox {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let bin = tmp.path().join("bin");
+        let private_cache = tmp.path().join(PRIVATE_CACHE);
+        fs::create_dir_all(&private_cache).unwrap();
+        let private_temp = tmp.path().join(PRIVATE_TEMP);
+        fs::create_dir_all(&private_temp).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&bin).unwrap();
         let script = match simctl_json {
@@ -36,6 +47,8 @@ impl Sandbox {
             _tmp: tmp,
             home,
             bin,
+            private_cache,
+            private_temp,
         }
     }
 
@@ -58,6 +71,8 @@ impl Sandbox {
         command
             .args(args)
             .env("HOME", &self.home)
+            .env(USER_CACHE_OVERRIDE, &self.private_cache)
+            .env(USER_TEMP_OVERRIDE, &self.private_temp)
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()));
         command
     }
@@ -110,6 +125,44 @@ fn the_default_mode_moves_to_the_trash() {
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert!(!folder.exists());
     assert!(sb.home.join(".Trash").exists());
+}
+
+#[test]
+fn instruments_caches_in_the_private_cache_folder_go_to_the_trash() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+    let cache = sb.private_cache.join("com.apple.dt.Instruments/symbols");
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("data.bin"), "cache").unwrap();
+    let other = sb.private_cache.join("com.apple.dt.Xcode/keep");
+    fs::create_dir_all(&other).unwrap();
+
+    let output = run(&mut sb.lfmclean(&["clean", "--ids", "xcode.instruments-cache", "--yes"]));
+
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(!cache.exists());
+    assert!(sb.home.join(".Trash/symbols").exists());
+    assert!(other.exists(), "only the Instruments folders are cleaned");
+}
+
+#[test]
+fn instruments_leftovers_in_the_private_temporary_folder_are_removed_and_nothing_else() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+    let leftover = sb.private_temp.join("instrumentsGQQDGv.ktrace");
+    fs::write(&leftover, vec![1_u8; 50_000]).unwrap();
+    let other = sb.private_temp.join("another-app.tmp");
+    fs::write(&other, "not ours").unwrap();
+
+    let output = run(&mut sb.lfmclean(&[
+        "--permanent",
+        "clean",
+        "--ids",
+        "xcode.instruments-cache",
+        "--yes",
+    ]));
+
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(!leftover.exists());
+    assert!(other.exists());
 }
 
 #[test]

@@ -277,7 +277,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::catalog::{Filter, Source};
+    use crate::catalog::{Base, Filter, Source};
     use crate::testing::{FakeRunner, Fixture};
 
     const NO_SIMULATORS: &str = r#"{"devices": {}}"#;
@@ -494,7 +494,7 @@ mod tests {
 
     /// Makes one entry that `source` would find, with a file inside, and returns its path.
     fn plant(fx: &Fixture, source: &Source) -> PathBuf {
-        let mut path = fx.home().join(source.root).join(source.sub);
+        let mut path = fx.env.source_root(source).unwrap().join(source.sub);
         for _ in 1..source.depth {
             path.push("level");
         }
@@ -503,7 +503,13 @@ mod tests {
             Filter::Prefix(prefix) => format!("{prefix}x"),
             Filter::Suffix(suffix) => format!("entry{suffix}"),
             Filter::Named(names) => names[0].to_string(),
+            Filter::PrefixAndSuffix(prefix, suffix) => format!("{prefix}x{suffix}"),
         });
+        // Only files are removed from the private temporary folder.
+        if source.base == Base::UserTemp {
+            fs::write(&path, "leftover").unwrap();
+            return path;
+        }
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("data.bin"), "cache").unwrap();
         path

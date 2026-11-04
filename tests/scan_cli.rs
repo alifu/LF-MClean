@@ -5,16 +5,23 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use lfmclean::env::{USER_CACHE_OVERRIDE, USER_TEMP_OVERRIDE};
 use serde_json::Value;
 use tempfile::TempDir;
 
 const NO_SIMULATORS: &str = r#"{"devices": {}}"#;
 const EXECUTABLE: u32 = 0o755;
+const PRIVATE_CACHE: &str = "private-cache";
+const PRIVATE_TEMP: &str = "private-temp";
 
 struct Sandbox {
     _tmp: TempDir,
     home: PathBuf,
     bin: PathBuf,
+    /// The private cache folder the program sees, inside the sandbox.
+    private_cache: PathBuf,
+    /// The private temporary folder the program sees, inside the sandbox.
+    private_temp: PathBuf,
 }
 
 impl Sandbox {
@@ -23,6 +30,10 @@ impl Sandbox {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let bin = tmp.path().join("bin");
+        let private_cache = tmp.path().join(PRIVATE_CACHE);
+        fs::create_dir_all(&private_cache).unwrap();
+        let private_temp = tmp.path().join(PRIVATE_TEMP);
+        fs::create_dir_all(&private_temp).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&bin).unwrap();
         let script = match simctl_json {
@@ -36,6 +47,8 @@ impl Sandbox {
             _tmp: tmp,
             home,
             bin,
+            private_cache,
+            private_temp,
         }
     }
 
@@ -51,6 +64,8 @@ impl Sandbox {
         command
             .args(args)
             .env("HOME", &self.home)
+            .env(USER_CACHE_OVERRIDE, &self.private_cache)
+            .env(USER_TEMP_OVERRIDE, &self.private_temp)
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()));
         command
     }
@@ -114,6 +129,24 @@ fn items_lists_each_item() {
     let text = stdout_of(&mut sb.lfmclean(&["scan", "--items"]));
 
     assert!(text.contains("    App-abc"), "{text}");
+}
+
+#[test]
+fn instruments_caches_in_the_private_cache_folder_are_found() {
+    let sb = Sandbox::new(Some(NO_SIMULATORS));
+    let cli = sb
+        .private_cache
+        .join("com.apple.dt.InstrumentsCLI/path_manager");
+    fs::create_dir_all(&cli).unwrap();
+    fs::write(cli.join("data.bin"), vec![1_u8; 50_000]).unwrap();
+    sb.plant("Library/Caches/com.apple.dt.Instruments/symbols");
+
+    let text = stdout_of(&mut sb.lfmclean(&["scan", "--items"]));
+
+    assert!(text.contains("Instruments caches"), "{text}");
+    assert!(text.contains("2 items"), "{text}");
+    assert!(text.contains("    path_manager"), "{text}");
+    assert!(text.contains("    symbols"), "{text}");
 }
 
 #[test]

@@ -1,13 +1,17 @@
 //! Path checks before any removal. `check` is the only way to get a `SafePath`, and `Remover`
 //! only accepts a `SafePath`, so nothing unchecked can be removed.
 //!
-//! Layers: the root must be one of the fixed cache folders in `rules`; the entry must be
+//! Layers: the root must be one of the fixed cache folders in `rules` (in the home folder or in the
+//! user's private cache folder), or the user's private temporary folder, where only Instruments'
+//! leftover files may go; the entry must be
 //! strictly inside it, on the same volume, owned by the user and not on the protected lists.
 
 mod project;
 mod rules;
 
-pub(crate) use project::{IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES};
+pub(crate) use project::{
+    IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES, TRACE_SUFFIX, is_trace_bundle,
+};
 
 use std::fs::{self, Metadata};
 use std::io;
@@ -172,8 +176,13 @@ pub fn check(path: &Path, root: &Path, env: &Env) -> Result<SafePath, GuardError
         return Err(GuardError::NotAbsolute(path.to_path_buf()));
     }
     let home = canonical(env.home())?;
-    let (root, root_meta) = checked_root(root, &home)?;
+    let (root, root_meta) = checked_root(root, &home, env)?;
     let (resolved, meta) = resolve_entry(path)?;
+    if rules::is_user_temp_root(&root, env.user_temp())
+        && !is_temp_leftover(&resolved, &root, &meta)
+    {
+        return Err(GuardError::Protected(resolved));
+    }
 
     if !is_strictly_inside(&resolved, &root) {
         return Err(GuardError::OutsideRoot {
@@ -260,13 +269,26 @@ pub fn check_project(path: &Path, project: &Path, env: &Env) -> Result<SafePath,
     })
 }
 
-fn checked_root(root: &Path, home: &Path) -> Result<(PathBuf, Metadata), GuardError> {
+fn checked_root(root: &Path, home: &Path, env: &Env) -> Result<(PathBuf, Metadata), GuardError> {
     let root = canonical(root)?;
-    if !rules::is_cache_root(&root, home) {
+    let allowed = rules::is_cache_root(&root, home)
+        || rules::is_user_cache_root(&root, env.user_cache())
+        || rules::is_user_temp_root(&root, env.user_temp());
+    if !allowed {
         return Err(GuardError::RootNotAllowed(root));
     }
     let meta = fs::metadata(&root).map_err(|err| fs_error(&root, &err))?;
     Ok((root, meta))
+}
+
+/// The private temporary folder holds every app's files, so only a regular file directly in it
+/// with the name an Instruments leftover has may go.
+fn is_temp_leftover(resolved: &Path, root: &Path, meta: &Metadata) -> bool {
+    let name_matches = resolved
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(rules::is_user_temp_leftover);
+    resolved.parent() == Some(root) && meta.file_type().is_file() && name_matches
 }
 
 /// Resolves the folders above the entry. A symlink entry stays a link; any other entry is
@@ -331,7 +353,7 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
-    use crate::testing::Fixture;
+    use crate::testing::{Fixture, PRECIOUS_FILE};
 
     const DERIVED_DATA: &str = "Library/Developer/Xcode/DerivedData";
     const GRADLE_CACHES: &str = ".gradle/caches";
@@ -346,6 +368,85 @@ mod tests {
 
         assert_eq!(safe.kind(), EntryKind::Dir);
         assert!(safe.path().ends_with("DerivedData/App-abc"));
+    }
+
+    #[test]
+    fn accepts_an_entry_of_an_instruments_cache_in_the_private_cache_folder() {
+        let fx = Fixture::new();
+        let root = fx.user_cache().join("com.apple.dt.InstrumentsCLI");
+        let item = root.join("path_manager");
+        fs::create_dir_all(&item).unwrap();
+
+        let safe = check(&item, &root, &fx.env).unwrap();
+
+        assert_eq!(safe.kind(), EntryKind::Dir);
+    }
+
+    #[test]
+    fn refuses_other_folders_of_the_private_cache_folder() {
+        let fx = Fixture::new();
+        let root = fx.user_cache().join("com.apple.dt.Xcode");
+        let item = root.join("data");
+        fs::create_dir_all(&item).unwrap();
+
+        assert_eq!(
+            check(&item, &root, &fx.env),
+            Err(GuardError::RootNotAllowed(root))
+        );
+    }
+
+    #[test]
+    fn refuses_the_private_cache_folder_when_it_is_unknown() {
+        let fx = Fixture::new();
+        let root = fx.user_cache().join("com.apple.dt.Instruments");
+        let item = root.join("data");
+        fs::create_dir_all(&item).unwrap();
+        let env = Env::new(fx.home(), fx.env.uid()).unwrap();
+
+        assert_eq!(
+            check(&item, &root, &env),
+            Err(GuardError::RootNotAllowed(root))
+        );
+    }
+
+    #[test]
+    fn accepts_only_instruments_leftovers_in_the_private_temporary_folder() {
+        let fx = Fixture::new();
+        let temp = fx.user_temp();
+        let leftover = temp.join("instrumentsGQQDGv.ktrace");
+        fs::write(&leftover, "trace").unwrap();
+        let other_file = temp.join("someone-else.tmp");
+        fs::write(&other_file, "x").unwrap();
+        let leftover_folder = temp.join("instrumentsDir.ktrace");
+        fs::create_dir_all(&leftover_folder).unwrap();
+        let nested = temp.join("sub/instrumentsX.ktrace");
+        fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        fs::write(&nested, "trace").unwrap();
+
+        assert!(check(&leftover, temp, &fx.env).is_ok());
+        for refused in [other_file, leftover_folder, nested] {
+            assert!(
+                matches!(
+                    check(&refused, temp, &fx.env),
+                    Err(GuardError::Protected(_))
+                ),
+                "{}",
+                refused.display()
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_a_link_named_like_an_instruments_leftover() {
+        let fx = Fixture::new();
+        let link = fx.user_temp().join("instrumentsLink.ktrace");
+        symlink(fx.outside.join(PRECIOUS_FILE), &link).unwrap();
+
+        assert!(matches!(
+            check(&link, fx.user_temp(), &fx.env),
+            Err(GuardError::Protected(_))
+        ));
+        assert!(fx.outside_is_intact());
     }
 
     #[test]

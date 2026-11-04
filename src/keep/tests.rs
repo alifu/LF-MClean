@@ -309,6 +309,24 @@ fn a_kept_target_keeps_all_its_items() {
 }
 
 #[test]
+fn a_kept_target_keeps_its_items_in_the_private_folders() {
+    let fx = Fixture::new();
+    let cache = fx
+        .user_cache()
+        .join("com.apple.dt.InstrumentsCLI/path_manager");
+    std::fs::create_dir_all(&cache).unwrap();
+    let leftover = fx.user_temp().join("instrumentsAB12.ktrace");
+    std::fs::write(&leftover, "trace").unwrap();
+    let keep = KeepList::empty(&fx.env)
+        .with_target("xcode.instruments-cache")
+        .unwrap();
+
+    assert!(keep.holds_kept_target(&cache));
+    assert!(keep.holds_kept_target(&leftover));
+    assert!(!keep.holds_kept_target(&fx.user_temp().join("other.tmp")));
+}
+
+#[test]
 fn a_kept_target_inside_another_targets_item_keeps_that_item() {
     let fx = Fixture::new();
     fx.dir(&format!(

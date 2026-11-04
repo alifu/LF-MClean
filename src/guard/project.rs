@@ -13,6 +13,11 @@ pub(crate) const MODULE_FILES: &[&str] = &["build.gradle", "build.gradle.kts"];
 pub(crate) const IOS_APP: &str = "iosApp";
 const XCODE_SUFFIXES: &[&str] = &[".xcodeproj", ".xcworkspace"];
 const PODFILE: &str = "Podfile";
+/// The end of the name of an Instruments recording, which is a folder (a bundle).
+pub(crate) const TRACE_SUFFIX: &str = ".trace";
+/// A file and a folder every Instruments recording has, and other `.trace` folders do not.
+const TRACE_FORM: &str = "form.template";
+const TRACE_CORESPACE: &str = "corespace";
 /// A project is searched this many folders deep for modules.
 /// `purge` searches this deep too, so what it offers is never deeper than the guard accepts.
 pub(crate) const MAX_DEPTH_IN_PROJECT: usize = 8;
@@ -21,7 +26,8 @@ pub(crate) const MAX_DEPTH_IN_PROJECT: usize = 8;
 ///
 /// - `build`: beside a Gradle file, or inside `iosApp` beside an Xcode project;
 /// - `.gradle`, `.kotlin`: directly in the project folder, beside a Gradle file;
-/// - `Pods`: in `iosApp`, beside a `Podfile`.
+/// - `Pods`: in `iosApp`, beside a `Podfile`;
+/// - `*.trace`: an Instruments recording directly in the project folder (not a link).
 pub(super) fn is_removable_project_folder(entry: &Path, root: &Path) -> bool {
     let (Some(name), Some(parent)) = (entry.file_name().and_then(|n| n.to_str()), entry.parent())
     else {
@@ -41,8 +47,17 @@ pub(super) fn is_removable_project_folder(entry: &Path, root: &Path) -> bool {
         "build" => is_gradle_folder(parent) || (is_ios_app(parent) && has_xcode_project(parent)),
         ".gradle" | ".kotlin" => parent == root && is_gradle_folder(parent),
         "Pods" => is_ios_app(parent) && has_file(parent, PODFILE),
+        _ if name.ends_with(TRACE_SUFFIX) => parent == root && is_trace_bundle(entry),
         _ => false,
     }
+}
+
+/// True when `folder` is a real folder holding what every Instruments recording holds.
+pub(crate) fn is_trace_bundle(folder: &Path) -> bool {
+    let is_real_dir = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+    is_real_dir(folder)
+        && has_file(folder, TRACE_FORM)
+        && is_real_dir(&folder.join(TRACE_CORESPACE))
 }
 
 /// True when `folder` has a Gradle settings or module file: a Gradle build or one of its modules.
@@ -83,6 +98,46 @@ mod tests {
 
     fn removable(fx: &Fixture, entry: &str, root: &str) -> bool {
         is_removable_project_folder(&fx.home().join(entry), &fx.home().join(root))
+    }
+
+    fn trace(fx: &Fixture, rel: &str) {
+        fx.file(&format!("{rel}/form.template"));
+        fx.dir(&format!("{rel}/corespace/run1"));
+    }
+
+    #[test]
+    fn an_instruments_recording_in_the_project_folder_is_removable() {
+        let fx = Fixture::new();
+        trace(&fx, "p/Launch_App.trace");
+
+        assert!(removable(&fx, "p/Launch_App.trace", "p"));
+    }
+
+    #[test]
+    fn a_trace_folder_that_is_not_a_recording_is_not() {
+        let fx = Fixture::new();
+        fx.dir("p/notes.trace");
+        fx.file("p/half.trace/form.template");
+        fx.file("p/file.trace");
+
+        for entry in ["p/notes.trace", "p/half.trace", "p/file.trace"] {
+            assert!(!removable(&fx, entry, "p"), "{entry}");
+        }
+    }
+
+    #[test]
+    fn a_recording_deeper_than_the_project_folder_or_a_link_is_not() {
+        let fx = Fixture::new();
+        trace(&fx, "p/sub/Deep.trace");
+        trace(&fx, "elsewhere/Real.trace");
+        std::os::unix::fs::symlink(
+            fx.home().join("elsewhere/Real.trace"),
+            fx.home().join("p/Link.trace"),
+        )
+        .unwrap();
+
+        assert!(!removable(&fx, "p/sub/Deep.trace", "p"));
+        assert!(!removable(&fx, "p/Link.trace", "p"));
     }
 
     #[test]

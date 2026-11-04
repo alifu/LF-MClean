@@ -12,7 +12,10 @@ use jwalk::WalkDir;
 
 use crate::command::{CommandRunner, SystemRunner};
 use crate::env::Env;
-use crate::guard::{self, IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES, SafePath};
+use crate::guard::{
+    self, IOS_APP, MAX_DEPTH_IN_PROJECT, MODULE_FILES, SETTINGS_FILES, SafePath, TRACE_SUFFIX,
+    is_trace_bundle,
+};
 use crate::keep::folded;
 use crate::packages::DEFAULT_PROJECT_FOLDERS;
 use crate::scan::size::disk_usage;
@@ -92,6 +95,17 @@ const GIT_HARDENING: &[&str] = &[
     "-c",
     "core.hooksPath=/dev/null",
 ];
+
+/// What the search of the project folders saw.
+#[derive(Debug, Default)]
+struct Seen {
+    /// Folders with a Gradle settings or module file.
+    gradle_dirs: BTreeSet<PathBuf>,
+    /// Folders with a Gradle settings file.
+    settings_dirs: BTreeSet<PathBuf>,
+    /// Instruments recordings (`.trace` bundles), which are not searched inside.
+    traces: BTreeSet<PathBuf>,
+}
 
 /// One project and the folders `purge` can remove from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,33 +203,38 @@ pub fn find_projects_with(
     gradle_home: Option<&Path>,
 ) -> Found {
     let mut found = Found::default();
-    let mut gradle_dirs = BTreeSet::new();
-    let mut settings_dirs = BTreeSet::new();
+    let mut seen = Seen::default();
     for folder in folders.iter().filter(|folder| folder.is_dir()) {
-        walk(
-            folder,
-            gradle_home,
-            &mut gradle_dirs,
-            &mut settings_dirs,
-            &mut found.problems,
-        );
+        walk(folder, gradle_home, &mut seen, &mut found.problems);
     }
-    let mut by_root: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
-    for dir in &gradle_dirs {
+    let mut by_root: BTreeMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> = BTreeMap::new();
+    for dir in &seen.gradle_dirs {
         // The outermost settings file owns the build, so a composite build (`build-logic`) is part
         // of its project, and keeping the project keeps it.
         let root = dir
             .ancestors()
-            .filter(|ancestor| settings_dirs.contains(*ancestor))
+            .filter(|ancestor| seen.settings_dirs.contains(*ancestor))
             .last()
             .unwrap_or(dir);
         by_root
             .entry(root.to_path_buf())
             .or_default()
+            .0
             .push(dir.clone());
     }
-    for (root, modules) in by_root {
-        let (project, problems) = project_at(env, &root, &modules, runner, gradle_home);
+    // A recording belongs to the folder it is in, shown as a project of its own unless that
+    // folder is already one.
+    for trace in &seen.traces {
+        if let Some(folder) = trace.parent() {
+            by_root
+                .entry(folder.to_path_buf())
+                .or_default()
+                .1
+                .push(trace.clone());
+        }
+    }
+    for (root, (modules, traces)) in by_root {
+        let (project, problems) = project_at(env, &root, &modules, &traces, runner, gradle_home);
         found.problems.extend(problems);
         found.projects.extend(project);
     }
@@ -230,13 +249,7 @@ pub fn find_projects_with(
     found
 }
 
-fn walk(
-    folder: &Path,
-    gradle_home: Option<&Path>,
-    gradle_dirs: &mut BTreeSet<PathBuf>,
-    settings_dirs: &mut BTreeSet<PathBuf>,
-    problems: &mut Vec<String>,
-) {
+fn walk(folder: &Path, gradle_home: Option<&Path>, seen: &mut Seen, problems: &mut Vec<String>) {
     let device = fs::metadata(folder).map(|meta| meta.dev()).ok();
     let skipped_home = gradle_home.map(folded);
     let deadline = Instant::now() + MAX_SEARCH_TIME;
@@ -257,8 +270,14 @@ fn walk(
                             || on_another_volume(entry, device)))
                 })
             });
+            // A recording is offered whole; what is inside it is never searched.
+            for child in children.iter_mut().flatten() {
+                if child.file_type.is_dir() && is_trace_name(&child.file_name) {
+                    child.read_children = None;
+                }
+            }
         });
-    for (seen, entry) in walk.into_iter().enumerate() {
+    for (count, entry) in walk.into_iter().enumerate() {
         if Instant::now() >= deadline {
             problems.push(format!(
                 "{} was searched only in part: it took too long",
@@ -266,7 +285,7 @@ fn walk(
             ));
             break;
         }
-        if seen >= MAX_ENTRIES {
+        if count >= MAX_ENTRIES {
             problems.push(format!(
                 "{} was searched only in part: it has too many entries",
                 folder.display()
@@ -286,6 +305,10 @@ fn walk(
                 entry.path().display()
             ));
         }
+        if entry.file_type.is_dir() && is_trace_name(&entry.file_name) {
+            seen.traces.insert(entry.path());
+            continue;
+        }
         let Some(name) = entry
             .file_name
             .to_str()
@@ -297,12 +320,17 @@ fn walk(
             continue;
         };
         if SETTINGS_FILES.contains(&name) {
-            settings_dirs.insert(dir.clone());
-            gradle_dirs.insert(dir);
+            seen.settings_dirs.insert(dir.clone());
+            seen.gradle_dirs.insert(dir);
         } else if MODULE_FILES.contains(&name) {
-            gradle_dirs.insert(dir);
+            seen.gradle_dirs.insert(dir);
         }
     }
+}
+
+fn is_trace_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|name| name.ends_with(TRACE_SUFFIX))
 }
 
 /// True when the folder is on another volume than the folder searched (a mount point). Unreadable
@@ -312,25 +340,26 @@ fn on_another_volume(entry: &jwalk::DirEntry<((), ())>, device: Option<u64>) -> 
     entry.metadata().map_or(true, |meta| meta.dev() != device)
 }
 
-/// The project whose folder is `root` and whose Gradle folders are `modules`, with its removable
-/// folders; `None` when it has none.
+/// The project whose folder is `root`, whose Gradle folders are `modules` and which holds the
+/// Instruments recordings `traces`, with its removable folders; `None` when it has none.
 fn project_at(
     env: &Env,
     root: &Path,
     modules: &[PathBuf],
+    traces: &[PathBuf],
     runner: &dyn CommandRunner,
     gradle_home: Option<&Path>,
 ) -> (Option<Project>, Vec<String>) {
     // The guard names paths as they are on disk; the project folder must be named the same way.
     let root = &root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let mut candidates: Vec<(PathBuf, &'static str)> = modules
-        .iter()
-        .map(|module| (module.join("build"), "purge.build"))
-        .collect();
-    candidates.push((root.join(".gradle"), "purge.gradle"));
-    candidates.push((root.join(".kotlin"), "purge.kotlin"));
-    candidates.push((root.join(IOS_APP).join("build"), "purge.ios-build"));
-    candidates.push((root.join(IOS_APP).join("Pods"), "purge.pods"));
+    let mut candidates = gradle_candidates(root, modules);
+    candidates.extend(
+        traces
+            .iter()
+            .filter(|trace| is_trace_bundle(trace))
+            .filter_map(|trace| trace.file_name())
+            .map(|name| (root.join(name), "purge.instruments-trace")),
+    );
     let tracked = tracked_builds(runner, root, &candidates);
     let mut items = Vec::new();
     let mut problems = Vec::new();
@@ -382,6 +411,22 @@ fn project_at(
         items,
     };
     (Some(project), problems)
+}
+
+/// The folders a Gradle project can remove; none when `root` holds no Gradle build.
+fn gradle_candidates(root: &Path, modules: &[PathBuf]) -> Vec<(PathBuf, &'static str)> {
+    if modules.is_empty() {
+        return Vec::new();
+    }
+    let mut candidates: Vec<(PathBuf, &'static str)> = modules
+        .iter()
+        .map(|module| (module.join("build"), "purge.build"))
+        .collect();
+    candidates.push((root.join(".gradle"), "purge.gradle"));
+    candidates.push((root.join(".kotlin"), "purge.kotlin"));
+    candidates.push((root.join(IOS_APP).join("build"), "purge.ios-build"));
+    candidates.push((root.join(IOS_APP).join("Pods"), "purge.pods"));
+    candidates
 }
 
 /// The `build` folders among `candidates` that hold files git tracks: someone committed them, so
@@ -662,6 +707,50 @@ mod tests {
         let found = find_projects(&fx.env, &[docs.clone(), docs.join("App")]);
 
         assert_eq!(found.projects.len(), 1);
+    }
+
+    fn record(fx: &Fixture, rel: &str) {
+        fx.file(&format!("{rel}/form.template"));
+        fx.dir(&format!("{rel}/corespace/run1"));
+    }
+
+    #[test]
+    fn an_instruments_recording_is_offered_in_the_folder_it_is_in() {
+        let fx = Fixture::new();
+        record(&fx, "Developer/MyApp/Launch_MyApp_2026.trace");
+
+        let found = find_projects(&fx.env, &default_folders(&fx.env));
+
+        assert_eq!(found.projects.len(), 1, "{:?}", found.problems);
+        let project = &found.projects[0];
+        assert_eq!(project.name, "MyApp");
+        assert_eq!(names(project), ["Launch_MyApp_2026.trace"]);
+        assert_eq!(project.items[0].target, "purge.instruments-trace");
+    }
+
+    #[test]
+    fn a_recording_in_a_gradle_project_joins_that_project() {
+        let fx = Fixture::new();
+        kmp(&fx, "Projects/Kmp");
+        record(&fx, "Projects/Kmp/Profile.trace");
+
+        let found = find_projects(&fx.env, &default_folders(&fx.env));
+
+        assert_eq!(found.projects.len(), 1);
+        assert!(names(&found.projects[0]).contains(&"Profile.trace"));
+    }
+
+    #[test]
+    fn a_recording_is_not_searched_inside_and_a_lookalike_is_not_offered() {
+        let fx = Fixture::new();
+        record(&fx, "Developer/App/Run.trace");
+        fx.file("Developer/App/Run.trace/inner/settings.gradle.kts");
+        fx.dir("Developer/Other/notes.trace");
+
+        let found = find_projects(&fx.env, &default_folders(&fx.env));
+
+        assert_eq!(found.projects.len(), 1);
+        assert_eq!(names(&found.projects[0]), ["Run.trace"]);
     }
 
     #[test]

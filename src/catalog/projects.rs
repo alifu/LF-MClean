@@ -58,4 +58,13 @@ pub(super) const TARGETS: &[Target] = &[
         kind: Kind::Paths,
         sources: &[],
     },
+    Target {
+        id: "purge.instruments-trace",
+        name: "Instruments recordings",
+        category: Category::Projects,
+        safety: Safety::Caution,
+        effect: "The recording is gone: profile the app again to get a new one.",
+        kind: Kind::Paths,
+        sources: &[],
+    },
 ];

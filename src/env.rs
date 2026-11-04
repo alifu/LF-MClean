@@ -3,12 +3,26 @@
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use thiserror::Error;
+
+use crate::catalog::{Base, Source};
 
 const ROOT_UID: u32 = 0;
 const LOG_DIR: &str = "Library/Logs/lfmclean";
 const CRASH_LOG: &str = "crash.log";
+/// Asked for the user's private cache folder; an absolute path, so `PATH` cannot swap it.
+const GETCONF: &str = "/usr/bin/getconf";
+const USER_CACHE_VARIABLE: &str = "DARWIN_USER_CACHE_DIR";
+const USER_TEMP_VARIABLE: &str = "DARWIN_USER_TEMP_DIR";
+/// Name the private cache and temporary folders instead of `getconf`; checked the same way. For
+/// tests that run the program with another `HOME`, which must not see the real private folders.
+pub const USER_CACHE_OVERRIDE: &str = "LFMCLEAN_USER_CACHE_DIR";
+/// See `USER_CACHE_OVERRIDE`.
+pub const USER_TEMP_OVERRIDE: &str = "LFMCLEAN_USER_TEMP_DIR";
+/// Where macOS keeps each user's private folders. A private cache folder elsewhere is refused.
+const USER_FOLDERS: &str = "/private/var/folders";
 
 /// Why the environment cannot be used.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -34,6 +48,10 @@ pub enum EnvError {
 pub struct Env {
     home: PathBuf,
     uid: u32,
+    /// The user's private cache folder, resolved; `None` when it is unknown or refused.
+    user_cache: Option<PathBuf>,
+    /// The user's private temporary folder, resolved; `None` when it is unknown or refused.
+    user_temp: Option<PathBuf>,
 }
 
 impl Env {
@@ -43,7 +61,18 @@ impl Env {
     /// See `Env::new`; also `NoHome` when `HOME` is not set.
     pub fn from_system() -> Result<Self, EnvError> {
         let home = std::env::var_os("HOME").ok_or(EnvError::NoHome)?;
-        Self::new(home, current_uid())
+        let env = Self::new(home, current_uid())?;
+        let private = |variable, override_variable| {
+            system_user_dir(variable, override_variable)
+                .and_then(|dir| checked_user_dir(&dir, env.uid))
+        };
+        let user_cache = private(USER_CACHE_VARIABLE, USER_CACHE_OVERRIDE);
+        let user_temp = private(USER_TEMP_VARIABLE, USER_TEMP_OVERRIDE);
+        Ok(Self {
+            user_cache,
+            user_temp,
+            ..env
+        })
     }
 
     /// An environment for `home` and `uid`, after checking both.
@@ -55,7 +84,28 @@ impl Env {
         ensure_not_root(uid)?;
         let home = home.into();
         validate_home(&home, uid)?;
-        Ok(Self { home, uid })
+        Ok(Self {
+            home,
+            uid,
+            user_cache: None,
+            user_temp: None,
+        })
+    }
+
+    /// The same environment with `dir` as the private cache folder, after checking it is a
+    /// folder of this user inside `/private/var/folders`.
+    #[must_use]
+    pub fn with_user_cache(self, dir: &Path) -> Self {
+        let user_cache = checked_user_dir(dir, self.uid);
+        Self { user_cache, ..self }
+    }
+
+    /// The same environment with `dir` as the private temporary folder, checked like
+    /// `with_user_cache`.
+    #[must_use]
+    pub fn with_user_temp(self, dir: &Path) -> Self {
+        let user_temp = checked_user_dir(dir, self.uid);
+        Self { user_temp, ..self }
     }
 
     /// Skips every check, so tests can pretend to be another user.
@@ -64,6 +114,27 @@ impl Env {
         Self {
             home: home.into(),
             uid,
+            user_cache: None,
+            user_temp: None,
+        }
+    }
+
+    /// Uses `dir` as the private cache folder without checking it, so tests can use a
+    /// temporary folder.
+    #[cfg(test)]
+    pub(crate) fn with_user_cache_unchecked(self, dir: &Path) -> Self {
+        Self {
+            user_cache: dir.canonicalize().ok(),
+            ..self
+        }
+    }
+
+    /// Uses `dir` as the private temporary folder without checking it.
+    #[cfg(test)]
+    pub(crate) fn with_user_temp_unchecked(self, dir: &Path) -> Self {
+        Self {
+            user_temp: dir.canonicalize().ok(),
+            ..self
         }
     }
 
@@ -71,6 +142,29 @@ impl Env {
     #[must_use]
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    /// The user's private cache folder, resolved, when it is known.
+    #[must_use]
+    pub fn user_cache(&self) -> Option<&Path> {
+        self.user_cache.as_deref()
+    }
+
+    /// The user's private temporary folder, resolved, when it is known.
+    #[must_use]
+    pub fn user_temp(&self) -> Option<&Path> {
+        self.user_temp.as_deref()
+    }
+
+    /// The folder a source's `root` names; `None` when its base folder is unknown.
+    #[must_use]
+    pub fn source_root(&self, source: &Source) -> Option<PathBuf> {
+        let base = match source.base {
+            Base::Home => self.home(),
+            Base::UserCache => self.user_cache()?,
+            Base::UserTemp => self.user_temp()?,
+        };
+        Some(base.join(source.root))
     }
 
     /// The user whose files may be removed.
@@ -107,6 +201,34 @@ pub fn ensure_not_root(uid: u32) -> Result<(), EnvError> {
         return Err(EnvError::RunningAsRoot);
     }
     Ok(())
+}
+
+/// The private folder `override_variable` names, or else the one `getconf variable` gives;
+/// `None` when neither says.
+fn system_user_dir(variable: &str, override_variable: &str) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os(override_variable) {
+        return Some(PathBuf::from(dir));
+    }
+    let output = Command::new(GETCONF).arg(variable).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let dir = text.trim();
+    (!dir.is_empty()).then(|| PathBuf::from(dir))
+}
+
+/// A private folder, resolved, when it is an absolute folder of `uid` inside
+/// `/private/var/folders`; `None` otherwise, and then nothing in it is offered.
+fn checked_user_dir(dir: &Path, uid: u32) -> Option<PathBuf> {
+    if !dir.is_absolute() {
+        return None;
+    }
+    let resolved = dir.canonicalize().ok()?;
+    let inside_user_folders =
+        resolved != Path::new(USER_FOLDERS) && resolved.starts_with(USER_FOLDERS);
+    let meta = fs::metadata(&resolved).ok()?;
+    (inside_user_folders && meta.is_dir() && meta.uid() == uid).then_some(resolved)
 }
 
 fn validate_home(home: &Path, uid: u32) -> Result<(), EnvError> {
@@ -169,6 +291,56 @@ mod tests {
                 home.display()
             );
         }
+    }
+
+    #[test]
+    fn the_private_cache_folder_must_be_inside_the_user_folders() {
+        let tmp = TempDir::new().unwrap();
+        let env = Env::new(tmp.path(), current_uid()).unwrap();
+
+        for dir in [
+            Path::new("/"),
+            Path::new("relative"),
+            Path::new(USER_FOLDERS),
+        ] {
+            assert_eq!(checked_user_dir(dir, current_uid()), None, "{dir:?}");
+        }
+        assert_eq!(
+            env.clone().with_user_cache(Path::new("/tmp")).user_cache(),
+            None
+        );
+    }
+
+    #[test]
+    fn the_private_cache_folder_must_belong_to_the_user() {
+        let Some(dir) = system_user_dir(USER_CACHE_VARIABLE, "LFMCLEAN_TEST_UNSET") else {
+            return;
+        };
+
+        let own = checked_user_dir(&dir, current_uid());
+
+        assert!(own.as_ref().is_some_and(|d| d.starts_with(USER_FOLDERS)));
+        assert_eq!(checked_user_dir(&dir, current_uid() + 1), None);
+    }
+
+    #[test]
+    fn a_source_of_the_private_cache_folder_needs_that_folder() {
+        let tmp = TempDir::new().unwrap();
+        let env = Env::new(tmp.path(), current_uid()).unwrap();
+        let source = Source::user_cache("com.apple.dt.Instruments", crate::catalog::Filter::Any);
+        let home_source = Source::children(".gradle/caches", crate::catalog::Filter::Any);
+
+        assert_eq!(env.source_root(&source), None);
+        assert_eq!(
+            env.source_root(&home_source),
+            Some(tmp.path().join(".gradle/caches"))
+        );
+        let with = env.with_user_cache_unchecked(tmp.path());
+        let resolved = tmp.path().canonicalize().unwrap();
+        assert_eq!(
+            with.source_root(&source),
+            Some(resolved.join("com.apple.dt.Instruments"))
+        );
     }
 
     #[test]

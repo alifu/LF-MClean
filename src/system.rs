@@ -15,6 +15,8 @@ pub enum Tool {
     Xcode,
     /// The iOS Simulator app.
     Simulator,
+    /// Instruments, the app or `xctrace`.
+    Instruments,
     /// Android Studio.
     AndroidStudio,
     /// An Android emulator.
@@ -35,7 +37,11 @@ enum Mark {
     Argument(&'static str),
 }
 
-/// How each tool shows in a process command line, and the targets it uses.
+/// What Instruments uses while it records or opens a recording.
+const INSTRUMENTS_TARGETS: &[&str] = &["xcode.instruments-cache", "purge.instruments-trace"];
+
+/// How each tool shows in a process command line, and the targets it uses. A tool can have more
+/// than one line, one per program it shows as.
 const TOOLS: &[(Tool, Mark, &[&str])] = &[
     (
         Tool::Xcode,
@@ -55,6 +61,16 @@ const TOOLS: &[(Tool, Mark, &[&str])] = &[
         Tool::Simulator,
         Mark::Program("Simulator.app/Contents/MacOS/Simulator"),
         &["xcode.sim-caches", "xcode.sim-unavailable"],
+    ),
+    (
+        Tool::Instruments,
+        Mark::Program("Instruments.app/Contents/MacOS/Instruments"),
+        INSTRUMENTS_TARGETS,
+    ),
+    (
+        Tool::Instruments,
+        Mark::Program("/usr/bin/xctrace"),
+        INSTRUMENTS_TARGETS,
     ),
     (
         Tool::AndroidStudio,
@@ -95,6 +111,7 @@ impl Tool {
         match self {
             Self::Xcode => "Xcode",
             Self::Simulator => "Simulator",
+            Self::Instruments => "Instruments",
             Self::AndroidStudio => "Android Studio",
             Self::Emulator => "An Android emulator",
             Self::GradleDaemon => "A Gradle daemon",
@@ -118,7 +135,9 @@ impl Tool {
             Self::GradleDaemon => "stop it first with `./gradlew --stop`",
             Self::KotlinDaemon => "it stops by itself after a while, or with `./gradlew --stop`",
             Self::Emulator => "close the emulator first",
-            Self::Xcode | Self::Simulator | Self::AndroidStudio => "quit it first",
+            Self::Xcode | Self::Simulator | Self::Instruments | Self::AndroidStudio => {
+                "quit it first"
+            }
         }
     }
 }
@@ -209,6 +228,26 @@ mod tests {
         assert_eq!(
             runner.calls.lock().unwrap()[0],
             ["ps", "-axww", "-o", "args="]
+        );
+    }
+
+    #[test]
+    fn instruments_is_found_as_the_app_or_as_xctrace() {
+        let app = FakeRunner::answering(
+            "/Applications/Xcode.app/Contents/Applications/Instruments.app/Contents/MacOS/Instruments\n",
+        );
+        let cli = FakeRunner::answering(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace record --output a.trace\n",
+        );
+        let lookalike =
+            FakeRunner::answering("/x/Instruments.app/Contents/MacOS/InstrumentsHelper\n");
+
+        assert_eq!(running_tools(&app).unwrap(), [Tool::Instruments]);
+        assert_eq!(running_tools(&cli).unwrap(), [Tool::Instruments]);
+        assert_eq!(running_tools(&lookalike).unwrap(), []);
+        assert_eq!(
+            tools_using(&[Tool::Instruments], "xcode.instruments-cache"),
+            [Tool::Instruments]
         );
     }
 

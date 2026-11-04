@@ -15,6 +15,8 @@ const CACHE_ROOTS: &[&str] = &[
     "Library/Developer/CoreSimulator/Caches",
     "Library/Caches/org.swift.swiftpm",
     "Library/Caches/CocoaPods",
+    "Library/Caches/com.apple.dt.Instruments",
+    "Library/Caches/com.apple.dt.InstrumentsCLI",
     "Library/Caches/JetBrains",
     "Library/Caches/Google",
     "Library/Logs/Google",
@@ -26,6 +28,14 @@ const CACHE_ROOTS: &[&str] = &[
     ".konan",
     ".cocoapods/repos",
 ];
+
+/// The only folders cleaned inside the private cache folder (`/private/var/folders/…/C`).
+const USER_CACHE_ROOTS: &[&str] = &["com.apple.dt.Instruments", "com.apple.dt.InstrumentsCLI"];
+
+/// The only entries removed from the private temporary folder (`/private/var/folders/…/T`), which
+/// holds every app's temporary files: what an Instruments recording leaves behind, by name.
+const USER_TEMP_PREFIX: &str = "instruments";
+const USER_TEMP_SUFFIX: &str = ".ktrace";
 
 /// Never removed, nor any folder that contains them. The tool only ever cleans inside these.
 const NEVER_REMOVED_OR_CONTAINED: &[&str] = &[
@@ -88,6 +98,30 @@ pub(super) fn is_cache_root(root: &Path, home: &Path) -> bool {
     CACHE_ROOTS
         .iter()
         .any(|rel| lowercase(&home.join(rel)) == root)
+}
+
+/// True when `root` is one of the folders cleaned inside the private cache folder.
+pub(super) fn is_user_cache_root(root: &Path, user_cache: Option<&Path>) -> bool {
+    let Some(user_cache) = user_cache else {
+        return false;
+    };
+    let root = lowercase(root);
+    USER_CACHE_ROOTS
+        .iter()
+        .any(|rel| lowercase(&user_cache.join(rel)) == root)
+}
+
+/// True when `root` is the private temporary folder itself.
+pub(super) fn is_user_temp_root(root: &Path, user_temp: Option<&Path>) -> bool {
+    user_temp.is_some_and(|temp| lowercase(temp) == lowercase(root))
+}
+
+/// True when `name` is one an Instruments leftover in the private temporary folder has.
+pub(super) fn is_user_temp_leftover(name: &str) -> bool {
+    let name = name.to_lowercase();
+    name.len() > USER_TEMP_PREFIX.len() + USER_TEMP_SUFFIX.len()
+        && name.starts_with(USER_TEMP_PREFIX)
+        && name.ends_with(USER_TEMP_SUFFIX)
 }
 
 /// True for a cache folder, anything inside one, and the folders of tools whose files are not
